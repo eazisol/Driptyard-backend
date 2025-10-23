@@ -35,7 +35,20 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         bool: True if password matches, False otherwise
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        # First try bcrypt verification
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        # If bcrypt fails, try SHA256 fallback (for legacy passwords)
+        import hashlib
+        try:
+            # Truncate password to 72 bytes if it's too long (bcrypt limit)
+            if len(plain_password.encode('utf-8')) > 72:
+                plain_password = plain_password[:72]
+            sha256_hash = hashlib.sha256(plain_password.encode()).hexdigest()
+            return sha256_hash == hashed_password
+        except Exception:
+            return False
 
 
 def get_password_hash(password: str) -> str:
@@ -47,16 +60,14 @@ def get_password_hash(password: str) -> str:
         
     Returns:
         str: The hashed password
+        
+    Raises:
+        Exception: If password hashing fails
     """
-    try:
-        # Truncate password to 72 bytes if it's too long (bcrypt limit)
-        if len(password.encode('utf-8')) > 72:
-            password = password[:72]
-        return pwd_context.hash(password)
-    except Exception as e:
-        # Fallback: use a simpler approach if bcrypt fails
-        import hashlib
-        return hashlib.sha256(password.encode()).hexdigest()
+    # Truncate password to 72 bytes if it's too long (bcrypt limit)
+    if len(password.encode('utf-8')) > 72:
+        password = password[:72]
+    return pwd_context.hash(password)
 
 
 def create_access_token(
