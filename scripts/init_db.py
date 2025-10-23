@@ -13,8 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from sqlalchemy.orm import Session
-from app.core.database import engine, SessionLocal, create_tables
-from app.core.config import settings
+from app.database import engine, SessionLocal, create_tables, settings
 
 
 def init_database():
@@ -56,7 +55,7 @@ def reset_database():
     print("Resetting database...")
     
     try:
-        from app.core.database import drop_tables
+        from app.database import drop_tables
         drop_tables()
         print("✅ Database tables dropped")
         

@@ -1,16 +1,13 @@
 """
-User Pydantic schemas.
+User-related Pydantic schemas.
 
-This module contains all Pydantic schemas related to user operations
-including request/response validation for user endpoints.
+This module contains all user-related request and response schemas.
 """
 
 from typing import Optional
-from pydantic import EmailStr, Field, field_validator
-from datetime import datetime
-from uuid import UUID
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.schemas.base import BaseResponseSchema, BaseCreateSchema, BaseUpdateSchema
+from app.schemas.base import BaseCreateSchema, BaseUpdateSchema, BaseResponseSchema
 
 
 class UserBaseSchema(BaseCreateSchema):
@@ -47,13 +44,6 @@ class UserCreate(UserBaseSchema):
         return v
 
 
-class UserLogin(BaseCreateSchema):
-    """Schema for user login."""
-    
-    email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., description="Password")
-
-
 class UserUpdate(BaseUpdateSchema):
     """Schema for user profile updates."""
     
@@ -85,12 +75,3 @@ class UserPublicResponse(BaseResponseSchema):
     last_name: Optional[str] = Field(None, description="Last name")
     bio: Optional[str] = Field(None, description="User bio")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
-
-
-class TokenResponse(BaseCreateSchema):
-    """Schema for authentication token response."""
-    
-    access_token: str = Field(..., description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
-    expires_in: int = Field(..., description="Token expiration time in seconds")
-    user: UserResponse = Field(..., description="User information")

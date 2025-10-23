@@ -1,73 +1,56 @@
 """
-Order Pydantic schemas.
+Order-related Pydantic schemas.
 
-This module contains all Pydantic schemas related to order operations
-including request/response validation for order endpoints.
+This module contains all order-related request and response schemas.
 """
 
 from typing import Optional
-from pydantic import Field, validator
+from pydantic import BaseModel, Field
 from decimal import Decimal
-from uuid import UUID
-from enum import Enum
+from datetime import datetime
 
-from app.schemas.base import BaseResponseSchema, BaseCreateSchema, BaseUpdateSchema
-
-
-class OrderStatus(str, Enum):
-    """Order status enumeration."""
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    SHIPPED = "shipped"
-    DELIVERED = "delivered"
-    CANCELLED = "cancelled"
-    REFUNDED = "refunded"
+from app.schemas.base import BaseCreateSchema, BaseUpdateSchema, BaseResponseSchema
 
 
-class OrderBaseSchema(BaseCreateSchema):
-    """Base order schema with common fields."""
+class OrderCreate(BaseCreateSchema):
+    """Schema for creating an order."""
     
-    product_id: UUID = Field(..., description="Product ID")
+    product_id: str = Field(..., description="Product ID")
     quantity: int = Field(..., ge=1, description="Order quantity")
-    total_amount: Decimal = Field(..., gt=0, description="Total order amount")
-    shipping_address: str = Field(..., min_length=1, max_length=500, description="Shipping address")
-    notes: Optional[str] = Field(None, max_length=500, description="Order notes")
-
-
-class OrderCreate(OrderBaseSchema):
-    """Schema for order creation."""
-    
-    pass
+    shipping_address: Optional[str] = Field(None, description="Shipping address")
+    notes: Optional[str] = Field(None, description="Order notes")
 
 
 class OrderUpdate(BaseUpdateSchema):
-    """Schema for order updates."""
+    """Schema for updating an order."""
     
-    status: Optional[OrderStatus] = Field(None, description="Order status")
-    shipping_address: Optional[str] = Field(None, min_length=1, max_length=500, description="Shipping address")
-    notes: Optional[str] = Field(None, max_length=500, description="Order notes")
-    tracking_number: Optional[str] = Field(None, max_length=100, description="Shipping tracking number")
+    status: Optional[str] = Field(None, description="Order status")
+    payment_status: Optional[str] = Field(None, description="Payment status")
+    tracking_number: Optional[str] = Field(None, description="Tracking number")
+    estimated_delivery: Optional[datetime] = Field(None, description="Estimated delivery date")
+    delivered_at: Optional[datetime] = Field(None, description="Actual delivery date")
+    notes: Optional[str] = Field(None, description="Order notes")
+    buyer_notes: Optional[str] = Field(None, description="Buyer notes")
+    seller_notes: Optional[str] = Field(None, description="Seller notes")
 
 
 class OrderResponse(BaseResponseSchema):
     """Schema for order response data."""
     
-    product_id: UUID = Field(..., description="Product ID")
-    buyer_id: UUID = Field(..., description="Buyer ID")
-    seller_id: UUID = Field(..., description="Seller ID")
+    order_number: str = Field(..., description="Order number")
+    product_id: str = Field(..., description="Product ID")
+    buyer_id: str = Field(..., description="Buyer ID")
+    seller_id: str = Field(..., description="Seller ID")
     quantity: int = Field(..., description="Order quantity")
-    total_amount: Decimal = Field(..., description="Total order amount")
-    status: OrderStatus = Field(..., description="Order status")
-    shipping_address: str = Field(..., description="Shipping address")
+    unit_price: Decimal = Field(..., description="Unit price")
+    total_amount: Decimal = Field(..., description="Total amount")
+    shipping_cost: Optional[Decimal] = Field(None, description="Shipping cost")
+    status: str = Field(..., description="Order status")
+    payment_status: str = Field(..., description="Payment status")
+    shipping_address: Optional[str] = Field(None, description="Shipping address")
+    tracking_number: Optional[str] = Field(None, description="Tracking number")
+    estimated_delivery: Optional[datetime] = Field(None, description="Estimated delivery date")
+    delivered_at: Optional[datetime] = Field(None, description="Actual delivery date")
     notes: Optional[str] = Field(None, description="Order notes")
-    tracking_number: Optional[str] = Field(None, description="Shipping tracking number")
-    shipped_at: Optional[str] = Field(None, description="Shipping timestamp")
-    delivered_at: Optional[str] = Field(None, description="Delivery timestamp")
-
-
-class OrderStatusUpdate(BaseUpdateSchema):
-    """Schema for order status updates."""
-    
-    status: OrderStatus = Field(..., description="New order status")
-    tracking_number: Optional[str] = Field(None, max_length=100, description="Shipping tracking number")
-    notes: Optional[str] = Field(None, max_length=500, description="Status update notes")
+    buyer_notes: Optional[str] = Field(None, description="Buyer notes")
+    seller_notes: Optional[str] = Field(None, description="Seller notes")

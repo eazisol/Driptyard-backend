@@ -5,15 +5,17 @@ This module creates and configures the FastAPI application with all
 necessary middleware, routers, and exception handlers.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
-from app.core.config import settings
-from app.core.exceptions import DriptyardException
-from app.api.v1.api import api_router
+from app.database import settings
+from app.routes.auth import router as auth_router
+from app.routes.users import router as users_router
+from app.routes.products import router as products_router
+from app.routes.orders import router as orders_router
 
 
 def create_app() -> FastAPI:
@@ -27,7 +29,7 @@ def create_app() -> FastAPI:
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         description="C2C E-commerce Backend API",
-        openapi_url=f"{settings.API_V1_STR}/openapi.json",
+        openapi_url="/openapi.json",
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -47,20 +49,19 @@ def create_app() -> FastAPI:
         allowed_hosts=settings.ALLOWED_HOSTS
     )
     
-    # Include API router
-    app.include_router(api_router, prefix=settings.API_V1_STR)
+    # Include API routers
+    app.include_router(auth_router, tags=["Authentication"])
+    app.include_router(users_router, prefix="/users", tags=["Users"])
+    app.include_router(products_router, prefix="/products", tags=["Products"])
+    app.include_router(orders_router, prefix="/orders", tags=["Orders"])
     
-    # Add custom exception handler
-    @app.exception_handler(DriptyardException)
-    async def driptyard_exception_handler(request, exc: DriptyardException):
-        """Handle custom application exceptions."""
+    # Add custom exception handler for HTTP exceptions
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request, exc: HTTPException):
+        """Handle HTTP exceptions."""
         return JSONResponse(
-            status_code=400,
-            content={
-                "error": exc.__class__.__name__,
-                "message": exc.message,
-                "details": exc.details
-            }
+            status_code=exc.status_code,
+            content={"detail": exc.detail}
         )
     
     # Health check endpoint

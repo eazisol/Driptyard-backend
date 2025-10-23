@@ -1,186 +1,189 @@
-# Driptyard Backend
+# Driptyard Backend - Simple FastAPI Project
 
-A FastAPI-based backend for a C2C (Consumer-to-Consumer) e-commerce platform.
+A beginner-friendly FastAPI backend for the Driptyard C2C e-commerce platform.
 
-## Features
+## 🚀 Quick Start (For Beginners)
 
-- **FastAPI Framework**: Modern, fast web framework for building APIs
-- **PostgreSQL Database**: Robust relational database with SQLAlchemy ORM
-- **JWT Authentication**: Secure token-based authentication
-- **Modular Architecture**: Clean separation of concerns with scalable structure
-- **API Versioning**: Versioned API endpoints for future compatibility
-- **Comprehensive Testing**: Built-in testing structure with pytest
+### Option 1: Automatic Setup (Recommended)
+```bash
+# 1. Clone and navigate to the project
+git clone <repository-url>
+cd Driptyard_Backend
 
-## Project Structure
+# 2. Run the automatic setup script
+python start.py
+```
+
+### Option 2: Manual Setup
+```bash
+# 1. Create virtual environment
+python -m venv venv
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Setup environment
+python setup_env.py
+
+# 4. Update .env file with your database details
+
+# 5. Run migrations
+alembic upgrade head
+
+# 6. Start the server
+uvicorn app.main:app --reload
+```
+
+## 📚 What You'll Learn
+
+This project demonstrates:
+- ✅ **FastAPI basics** - Modern Python web framework
+- ✅ **Authentication** - JWT tokens, password hashing
+- ✅ **Database** - SQLAlchemy ORM, PostgreSQL
+- ✅ **API Design** - RESTful endpoints, request/response models
+- ✅ **Security** - Password validation, CORS, input validation
+
+## 🛠️ Tech Stack
+
+- **FastAPI** - Modern, fast web framework
+- **SQLAlchemy** - Database ORM
+- **PostgreSQL** - Database
+- **Alembic** - Database migrations
+- **Pydantic** - Data validation
+- **JWT** - Authentication tokens
+
+## 📖 API Documentation
+
+Once running, visit:
+- **Interactive API Docs**: http://localhost:8000/docs
+- **Alternative Docs**: http://localhost:8000/redoc
+
+## 🔐 Authentication Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/register` | Register new user |
+| POST | `/api/v1/login` | Login user |
+| POST | `/api/v1/logout` | Logout user |
+| GET | `/api/v1/me` | Get current user profile |
+| POST | `/api/v1/refresh` | Refresh access token |
+| POST | `/api/v1/verify-email` | Verify email with code |
+| POST | `/api/v1/resend-verification` | Resend verification code |
+
+## 🗄️ Database Setup
+
+1. **Install PostgreSQL** on your system
+2. **Create a database** named `Driptyard`
+3. **Update DATABASE_URL** in `.env` file:
+   ```
+   DATABASE_URL="postgres://username:password@localhost:5432/Driptyard"
+   ```
+4. **Run migrations**:
+   ```bash
+   alembic upgrade head
+   ```
+
+## 📁 Project Structure
 
 ```
 Driptyard_Backend/
 ├── app/
-│   ├── core/           # Configuration, database, security
-│   ├── api/v1/         # Versioned API endpoints
-│   ├── models/         # SQLAlchemy models
-│   ├── schemas/        # Pydantic validation schemas
-│   ├── services/       # Business logic layer
-│   ├── utils/          # Helper functions
-│   └── tests/          # Test suite
-├── migrations/         # Database migrations (Alembic)
-├── static/            # Static files
-├── scripts/           # Utility scripts
-└── docs/              # Documentation
+│   ├── main.py          # FastAPI application entry point
+│   ├── database.py      # Database configuration
+│   ├── models.py        # Database models (User, etc.)
+│   ├── schemas.py       # Request/response models
+│   ├── auth.py          # Authentication logic
+│   └── routes/
+│       └── auth.py      # Authentication endpoints
+├── migrations/          # Database migration files
+├── scripts/            # Database utility scripts
+├── requirements.txt     # Python dependencies
+├── start.py            # Quick start script
+└── setup_env.py        # Environment setup script
 ```
 
-## Setup Instructions
+## 🔧 Configuration
 
-### 1. Clone the Repository
+The `.env` file contains all configuration:
 
+```env
+# Database
+DATABASE_URL="postgres://user:pass@localhost:5432/Driptyard"
+
+# Security
+SECRET_KEY="your-secret-key-here"
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Email (for verification)
+SMTP_HOST="smtp.gmail.com"
+SMTP_USER="your-email@gmail.com"
+SMTP_PASSWORD="your-app-password"
+```
+
+## 🧪 Testing the API
+
+### 1. Register a User
 ```bash
-git clone <repository-url>
-cd Driptyard_Backend
+curl -X POST "http://localhost:8000/api/v1/register" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "SecurePass123",
+    "username": "testuser",
+    "phone": "+1234567890",
+    "country_code": "US"
+  }'
 ```
 
-### 2. Create Virtual Environment
-
+### 2. Login
 ```bash
-python -m venv venv
-
-# On Windows
-venv\Scripts\activate
-
-# On macOS/Linux
-source venv/bin/activate
+curl -X POST "http://localhost:8000/api/v1/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "SecurePass123"
+  }'
 ```
 
-### 3. Install Dependencies
-
+### 3. Get User Profile (with token)
 ```bash
-pip install -r requirements.txt
-
-# For development
-pip install -r requirements-dev.txt
+curl -X GET "http://localhost:8000/api/v1/me" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-### 4. Environment Configuration
+## 🐛 Troubleshooting
 
-```bash
-# Copy the sample environment file
-cp sample.env.txt .env
+### Common Issues:
 
-# Edit .env with your actual values
-# Make sure to set your DATABASE_URL and SECRET_KEY
-```
+1. **Database Connection Error**
+   - Check if PostgreSQL is running
+   - Verify DATABASE_URL in .env file
+   - Ensure database exists
 
-### 5. Database Setup
+2. **Import Errors**
+   - Make sure virtual environment is activated
+   - Run `pip install -r requirements.txt`
 
-```bash
-# Install PostgreSQL and create a database
-# Update DATABASE_URL in .env file
+3. **Migration Errors**
+   - Check database connection
+   - Run `alembic upgrade head`
 
-# Initialize Alembic (when ready)
-alembic init migrations
+## 📚 Learning Resources
 
-# Create your first migration
-alembic revision --autogenerate -m "Initial migration"
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [SQLAlchemy Tutorial](https://docs.sqlalchemy.org/en/14/tutorial/)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
 
-# Apply migrations
-alembic upgrade head
-```
-
-### 6. Run the Application
-
-```bash
-# Development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Production server
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-## API Documentation
-
-Once the server is running, you can access:
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **OpenAPI JSON**: http://localhost:8000/openapi.json
-
-## Development
-
-### Code Quality
-
-```bash
-# Format code
-black app/
-
-# Lint code
-flake8 app/
-
-# Type checking
-mypy app/
-```
-
-### Testing
-
-```bash
-# Run tests
-pytest
-
-# Run tests with coverage
-pytest --cov=app
-```
-
-## API Endpoints
-
-### Authentication
-- `POST /api/v1/auth/register` - User registration
-- `POST /api/v1/auth/login` - User login
-- `POST /api/v1/auth/refresh` - Refresh token
-
-### Users
-- `GET /api/v1/users/me` - Get current user
-- `PUT /api/v1/users/me` - Update current user
-- `DELETE /api/v1/users/me` - Delete current user
-
-### Products
-- `GET /api/v1/products/` - List products
-- `POST /api/v1/products/` - Create product
-- `GET /api/v1/products/{id}` - Get product
-- `PUT /api/v1/products/{id}` - Update product
-- `DELETE /api/v1/products/{id}` - Delete product
-
-### Orders
-- `GET /api/v1/orders/` - List orders
-- `POST /api/v1/orders/` - Create order
-- `GET /api/v1/orders/{id}` - Get order
-- `PUT /api/v1/orders/{id}` - Update order
-
-### Payments
-- `POST /api/v1/payments/` - Process payment
-- `GET /api/v1/payments/{id}` - Get payment status
-
-### Chat
-- `GET /api/v1/chat/conversations/` - List conversations
-- `POST /api/v1/chat/messages/` - Send message
-- `GET /api/v1/chat/messages/{conversation_id}` - Get messages
-
-## Future Features
-
-- Real-time chat with WebSockets
-- Payment gateway integration
-- File upload for product images
-- Email notifications
-- Advanced search and filtering
-- Recommendation system
-- Analytics and reporting
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
+4. Test your changes
+5. Submit a pull request
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License.

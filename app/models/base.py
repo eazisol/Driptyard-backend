@@ -1,18 +1,17 @@
 """
 Base model class with common fields.
 
-This module provides the base model class that all other models inherit from,
-including common fields like id, created_at, and updated_at.
+This module contains the BaseModel class that all other models inherit from.
 """
 
 from datetime import datetime
 from typing import Any
-from sqlalchemy import Column, String, DateTime, func
+from sqlalchemy import Column, DateTime, func
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
-from app.core.database import Base
+from app.database import Base
 
 
 class BaseModel(Base):

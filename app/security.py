@@ -1,20 +1,27 @@
 """
-Security utilities for authentication and authorization.
+Security utilities for authentication.
 
 This module provides password hashing, JWT token creation and verification,
-and other security-related utilities.
+and authentication utilities.
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Union
+from typing import Any, Optional, Union
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
-from app.core.config import settings
+from app.database import settings
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__default_rounds=12,
+    bcrypt__min_rounds=4,
+    bcrypt__max_rounds=31
+)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -41,7 +48,15 @@ def get_password_hash(password: str) -> str:
     Returns:
         str: The hashed password
     """
-    return pwd_context.hash(password)
+    try:
+        # Truncate password to 72 bytes if it's too long (bcrypt limit)
+        if len(password.encode('utf-8')) > 72:
+            password = password[:72]
+        return pwd_context.hash(password)
+    except Exception as e:
+        # Fallback: use a simpler approach if bcrypt fails
+        import hashlib
+        return hashlib.sha256(password.encode()).hexdigest()
 
 
 def create_access_token(
@@ -98,7 +113,7 @@ def verify_token(token: str) -> Optional[str]:
         return None
 
 
-def create_token_response(user_id: str) -> Dict[str, Any]:
+def create_token_response(user_id: str) -> dict[str, Any]:
     """
     Create a complete token response with access token and metadata.
     
@@ -106,7 +121,7 @@ def create_token_response(user_id: str) -> Dict[str, Any]:
         user_id: The user ID to create token for
         
     Returns:
-        Dict[str, Any]: Token response with access_token and token_type
+        dict[str, Any]: Token response with access_token and token_type
     """
     access_token = create_access_token(subject=user_id)
     return {

@@ -12,8 +12,7 @@ from typing import List, Dict, Any
 sys.path.append(str(Path(__file__).parent.parent))
 
 from sqlalchemy.orm import Session
-from app.core.database import SessionLocal
-from app.core.config import settings
+from app.database import SessionLocal, settings
 
 
 class DatabaseSeeder:
