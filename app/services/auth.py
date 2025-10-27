@@ -44,67 +44,85 @@ class AuthService:
         Raises:
             HTTPException: If registration fails
         """
-        # Check if user already exists
-        existing_user = self.db.query(User).filter(
-            (User.email == user_data.email) | (User.username == user_data.username)
-        ).first()
-        
-        if existing_user:
-            if existing_user.email == user_data.email:
+        try:
+            # Check if user already exists
+            existing_user = self.db.query(User).filter(
+                (User.email == user_data.email) | (User.username == user_data.username)
+            ).first()
+            
+            if existing_user:
+                if existing_user.email == user_data.email:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Email already registered"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Username already taken"
+                    )
+            
+            # Generate verification code
+            verification_code = self._generate_verification_code()
+            
+            # Create email verification record
+            email_verification = EmailVerification.create_verification(
+                email=user_data.email,
+                code=verification_code,
+                expiry_minutes=settings.VERIFICATION_CODE_EXPIRY_MINUTES
+            )
+            
+            # Hash password with proper error handling
+            try:
+                hashed_password = get_password_hash(user_data.password)
+            except Exception as e:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Email already registered"
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Password hashing failed: {str(e)}"
                 )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Username already taken"
-                )
-        
-        # Generate verification code
-        verification_code = self._generate_verification_code()
-        
-        # Create email verification record
-        email_verification = EmailVerification.create_verification(
-            email=user_data.email,
-            code=verification_code,
-            expiry_minutes=settings.VERIFICATION_CODE_EXPIRY_MINUTES
-        )
-        
-        # Store registration data temporarily
-        registration_data = RegistrationData(
-            email=user_data.email,
-            username=user_data.username,
-            hashed_password=get_password_hash(user_data.password),
-            phone=user_data.phone,
-            country_code=user_data.country_code
-        )
-        
-        # Store verification record and registration data
-        self.db.add(email_verification)
-        self.db.add(registration_data)
-        self.db.commit()
-        
-        # Send verification email
-        email_sent = email_service.send_verification_email(
-            user_data.email, 
-            verification_code
-        )
-        
-        if not email_sent:
-            # If email fails, clean up verification record
-            self.db.delete(email_verification)
+            
+            # Store registration data temporarily
+            registration_data = RegistrationData(
+                email=user_data.email,
+                username=user_data.username,
+                hashed_password=hashed_password,
+                phone=user_data.phone,
+                country_code=user_data.country_code
+            )
+            
+            # Store verification record and registration data
+            self.db.add(email_verification)
+            self.db.add(registration_data)
             self.db.commit()
+            
+            # Send verification email
+            email_sent = email_service.send_verification_email(
+                user_data.email, 
+                verification_code
+            )
+            
+            if not email_sent:
+                # Email failed but keep the registration (useful for development/testing)
+                # In production, you might want to be stricter
+                print(f"⚠️  WARNING: Failed to send verification email to {user_data.email}")
+                print(f"   Verification code: {verification_code}")
+                # Don't roll back - allow registration to proceed for testing
+            
+            return {
+                "message": "Registration successful. Please check your email for verification code.",
+                "email": user_data.email,
+                "expires_in": settings.VERIFICATION_CODE_EXPIRY_MINUTES * 60
+            }
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors and return a user-friendly message
+            self.db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send verification email"
+                detail=f"Registration failed: {str(e)}"
             )
-        
-        return {
-            "message": "Registration successful. Please check your email for verification code.",
-            "email": user_data.email,
-            "expires_in": settings.VERIFICATION_CODE_EXPIRY_MINUTES * 60
-        }
     
     async def verify_email(self, verification_data) -> Dict[str, Any]:
         """

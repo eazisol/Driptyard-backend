@@ -57,6 +57,11 @@ class UserRegister(BaseCreateSchema):
         """Validate password strength."""
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
+        
+        # Check byte length (bcrypt has a 72-byte limit)
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (maximum 72 bytes when encoded)')
+        
         if not re.search(r'[A-Z]', v):
             raise ValueError('Password must contain at least one uppercase letter')
         if not re.search(r'[a-z]', v):
