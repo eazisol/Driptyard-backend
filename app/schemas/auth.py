@@ -101,3 +101,52 @@ class TokenResponse(BaseModel):
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration time in seconds")
     user: UserResponse = Field(..., description="User information")
+
+
+class PasswordResetRequest(BaseCreateSchema):
+    """Schema for password reset request."""
+    
+    email: EmailStr = Field(..., description="User email address")
+
+
+class PasswordResetVerify(BaseCreateSchema):
+    """Schema for password reset verification."""
+    
+    email: EmailStr = Field(..., description="User email address")
+    reset_token: str = Field(..., min_length=6, max_length=6, description="6-digit reset token")
+    new_password: str = Field(..., min_length=8, max_length=100, description="New password")
+    
+    @field_validator('reset_token')
+    @classmethod
+    def validate_reset_token(cls, v):
+        """Validate reset token format."""
+        if not v.isdigit():
+            raise ValueError('Reset token must contain only digits')
+        return v
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_password(cls, v):
+        """Validate password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        
+        # Check byte length (bcrypt has a 72-byte limit)
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (maximum 72 bytes when encoded)')
+        
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        return v
+
+
+class PasswordResetResponse(BaseModel):
+    """Schema for password reset response."""
+    
+    message: str = Field(..., description="Success message")
+    email: str = Field(..., description="User email address")
+    expires_in: int = Field(..., description="Reset token expiry time in seconds")

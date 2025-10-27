@@ -47,10 +47,23 @@ class UserCreate(UserBaseSchema):
 class UserUpdate(BaseUpdateSchema):
     """Schema for user profile updates."""
     
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="Username")
     first_name: Optional[str] = Field(None, max_length=100, description="First name")
     last_name: Optional[str] = Field(None, max_length=100, description="Last name")
     phone: Optional[str] = Field(None, max_length=20, description="Phone number")
+    country_code: Optional[str] = Field(None, min_length=2, max_length=3, description="Country code")
     bio: Optional[str] = Field(None, max_length=500, description="User bio")
+    avatar_url: Optional[str] = Field(None, max_length=500, description="Avatar URL")
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format."""
+        if v is None:
+            return v
+        if not v.replace('_', '').replace('-', '').isalnum():
+            raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
+        return v.lower()
 
 
 class UserResponse(BaseResponseSchema):

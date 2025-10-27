@@ -10,12 +10,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.auth import AuthService
-from app.security import get_current_user_id, verify_password, create_token_response
-from app.models.user import User
+from app.security import get_current_user_id, verify_password, create_token_response, get_password_hash
+from app.models.user import User, PasswordResetToken
 from app.schemas.auth import UserLogin
 from app.schemas.auth import (
-    UserRegister, EmailVerificationRequest, RegistrationResponse, TokenResponse, ResendVerificationRequest
+    UserRegister, EmailVerificationRequest, RegistrationResponse, TokenResponse, ResendVerificationRequest,
+    PasswordResetRequest, PasswordResetVerify, PasswordResetResponse
 )
+from app.schemas.user import UserUpdate, UserResponse
+from app.services.email import email_service
+import secrets
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -263,4 +268,205 @@ async def refresh_token(
         "token_type": token_response["token_type"],
         "expires_in": token_response["expires_in"],
         "user": user_response
+    }
+
+
+@router.post("/password-reset/request", response_model=PasswordResetResponse, status_code=status.HTTP_200_OK)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Request password reset link/code.
+    
+    Args:
+        request: Password reset request with email
+        db: Database session
+        
+    Returns:
+        PasswordResetResponse: Success message with expiry info
+        
+    Raises:
+        HTTPException: If request fails
+    """
+    # Check if user exists
+    user = db.query(User).filter(User.email == request.email).first()
+    
+    if not user:
+        # Return success even if user doesn't exist (security best practice)
+        return {
+            "message": "If an account with that email exists, a password reset code has been sent",
+            "email": request.email,
+            "expires_in": 900  # 15 minutes
+        }
+    
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account is deactivated. Please contact support."
+        )
+    
+    # Invalidate any existing unused reset tokens for this email
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.email == request.email,
+        PasswordResetToken.is_used == False
+    ).update({"is_used": True})
+    db.commit()
+    
+    # Generate 6-digit reset token
+    reset_token = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
+    
+    # Create new reset token record
+    expiry_minutes = 15
+    token_record = PasswordResetToken.create_reset_token(
+        email=request.email,
+        token=reset_token,
+        expiry_minutes=expiry_minutes
+    )
+    
+    db.add(token_record)
+    db.commit()
+    
+    # Send reset email
+    email_sent = email_service.send_password_reset_email(request.email, reset_token)
+    
+    if not email_sent:
+        # Don't fail the request if email fails, but log it
+        print(f"Warning: Failed to send password reset email to {request.email}")
+    
+    return {
+        "message": "If an account with that email exists, a password reset code has been sent",
+        "email": request.email,
+        "expires_in": expiry_minutes * 60  # Convert to seconds
+    }
+
+
+@router.post("/password-reset/verify", response_model=dict, status_code=status.HTTP_200_OK)
+async def verify_password_reset(
+    request: PasswordResetVerify,
+    db: Session = Depends(get_db)
+):
+    """
+    Verify reset token and update password.
+    
+    Args:
+        request: Reset verification with email, token, and new password
+        db: Database session
+        
+    Returns:
+        dict: Success message
+        
+    Raises:
+        HTTPException: If verification or password update fails
+    """
+    # Find the reset token
+    token_record = db.query(PasswordResetToken).filter(
+        PasswordResetToken.email == request.email,
+        PasswordResetToken.reset_token == request.reset_token,
+        PasswordResetToken.is_used == False
+    ).first()
+    
+    if not token_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+    
+    # Check if token is expired
+    if token_record.is_expired():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token has expired. Please request a new one."
+        )
+    
+    # Find the user
+    user = db.query(User).filter(User.email == request.email).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Update user's password
+    user.hashed_password = get_password_hash(request.new_password)
+    user.updated_at = datetime.utcnow()
+    
+    # Mark token as used
+    token_record.is_used = True
+    
+    db.commit()
+    
+    return {
+        "message": "Password has been reset successfully. You can now login with your new password."
+    }
+
+
+@router.put("/profile", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def update_profile(
+    profile_data: UserUpdate,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Update user profile.
+    
+    Args:
+        profile_data: Profile update data
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        UserResponse: Updated user information
+        
+    Raises:
+        HTTPException: If update fails
+    """
+    # Find the user
+    user = db.query(User).filter(User.id == current_user_id).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Update only provided fields
+    update_data = profile_data.model_dump(exclude_unset=True)
+    
+    # Check if username is being updated and if it's already taken
+    if 'username' in update_data and update_data['username'] != user.username:
+        existing_user = db.query(User).filter(
+            User.username == update_data['username']
+        ).first()
+        
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username is already taken"
+            )
+    
+    # Update user fields
+    for field, value in update_data.items():
+        setattr(user, field, value)
+    
+    user.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(user)
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "phone": user.phone,
+        "bio": user.bio,
+        "avatar_url": user.avatar_url,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at
     }

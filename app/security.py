@@ -10,7 +10,8 @@ from typing import Any, Optional, Union
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import settings
 
@@ -22,6 +23,9 @@ pwd_context = CryptContext(
     bcrypt__min_rounds=4,
     bcrypt__max_rounds=31
 )
+
+# Security scheme for Bearer token
+security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -151,12 +155,12 @@ def create_token_response(user_id: str) -> dict[str, Any]:
     }
 
 
-def get_current_user_id(token: str) -> str:
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """
-    Get current user ID from token, raising exception if invalid.
+    Get current user ID from Bearer token in Authorization header.
     
     Args:
-        token: The JWT token
+        credentials: HTTP Authorization credentials containing the Bearer token
         
     Returns:
         str: The user ID
@@ -164,6 +168,7 @@ def get_current_user_id(token: str) -> str:
     Raises:
         HTTPException: If token is invalid or expired
     """
+    token = credentials.credentials
     user_id = verify_token(token)
     if user_id is None:
         raise HTTPException(

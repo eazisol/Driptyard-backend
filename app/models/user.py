@@ -89,3 +89,38 @@ class RegistrationData(BaseModel):
     
     # Store additional data as JSON
     additional_data = Column(JSON, nullable=True)
+
+
+class PasswordResetToken(BaseModel):
+    """Password reset token model for password recovery."""
+    
+    __tablename__ = "password_reset_tokens"
+    
+    # Email and reset details
+    email = Column(String(255), nullable=False, index=True)
+    reset_token = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_used = Column(Boolean, default=False, nullable=False)
+    
+    # Create composite index for efficient lookups
+    __table_args__ = (
+        Index('idx_email_reset_token', 'email', 'reset_token'),
+        Index('idx_email_reset_active', 'email', 'is_used'),
+    )
+    
+    def is_expired(self) -> bool:
+        """Check if the reset token is expired."""
+        return datetime.utcnow() > self.expires_at
+    
+    def is_valid(self) -> bool:
+        """Check if the reset token is valid (not expired and not used)."""
+        return not self.is_expired() and not self.is_used
+    
+    @classmethod
+    def create_reset_token(cls, email: str, token: str, expiry_minutes: int = 15) -> 'PasswordResetToken':
+        """Create a new password reset token record."""
+        return cls(
+            email=email,
+            reset_token=token,
+            expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes)
+        )

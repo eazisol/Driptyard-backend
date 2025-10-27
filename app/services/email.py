@@ -121,6 +121,106 @@ class EmailService:
         )
         
         return self._send_email(email, subject, html_content)
+    
+    def send_password_reset_email(self, email: str, reset_token: str) -> bool:
+        """
+        Send password reset token.
+        
+        Args:
+            email: User email address
+            reset_token: 6-digit reset token
+            
+        Returns:
+            bool: True if email sent successfully, False otherwise
+        """
+        subject = "Reset Your Password - Driptyard"
+        
+        # Create HTML content for password reset
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }}
+                .container {{
+                    background-color: #f9f9f9;
+                    border-radius: 10px;
+                    padding: 30px;
+                    margin: 20px 0;
+                }}
+                .header {{
+                    text-align: center;
+                    color: #2c3e50;
+                    margin-bottom: 30px;
+                }}
+                .token {{
+                    background-color: #3498db;
+                    color: white;
+                    font-size: 32px;
+                    font-weight: bold;
+                    text-align: center;
+                    padding: 20px;
+                    border-radius: 8px;
+                    letter-spacing: 8px;
+                    margin: 30px 0;
+                }}
+                .info {{
+                    background-color: #fff;
+                    padding: 20px;
+                    border-radius: 8px;
+                    border-left: 4px solid #3498db;
+                    margin: 20px 0;
+                }}
+                .footer {{
+                    text-align: center;
+                    color: #7f8c8d;
+                    font-size: 12px;
+                    margin-top: 30px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🔐 Password Reset Request</h1>
+                </div>
+                
+                <p>Hello,</p>
+                
+                <p>We received a request to reset your password for your Driptyard account ({email}).</p>
+                
+                <p>Use the following code to reset your password:</p>
+                
+                <div class="token">{reset_token}</div>
+                
+                <div class="info">
+                    <strong>⏰ This code will expire in 15 minutes</strong>
+                    <p style="margin: 10px 0 0 0;">For security reasons, please use this code as soon as possible.</p>
+                </div>
+                
+                <p>If you didn't request a password reset, please ignore this email and your password will remain unchanged.</p>
+                
+                <p>For security reasons, never share this code with anyone.</p>
+                
+                <div class="footer">
+                    <p>This is an automated email. Please do not reply to this message.</p>
+                    <p>&copy; 2024 Driptyard. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return self._send_email(email, subject, html_content)
 
 
 # Global email service instance
