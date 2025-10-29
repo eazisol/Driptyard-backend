@@ -58,6 +58,28 @@ class Settings(BaseSettings):
         description="Directory for file uploads"
     )
     
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: Optional[str] = Field(
+        default=None,
+        description="AWS Access Key ID for S3"
+    )
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(
+        default=None,
+        description="AWS Secret Access Key for S3"
+    )
+    AWS_REGION: str = Field(
+        default="us-east-1",
+        description="AWS region for S3"
+    )
+    S3_BUCKET_NAME: Optional[str] = Field(
+        default=None,
+        description="S3 bucket name for file storage"
+    )
+    S3_BASE_URL: Optional[str] = Field(
+        default=None,
+        description="S3 base URL for file access"
+    )
+    
     # Redis Configuration (for future caching/sessions)
     REDIS_URL: Optional[str] = Field(
         default=None,

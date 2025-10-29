@@ -17,7 +17,6 @@ from app.schemas.auth import (
     UserRegister, EmailVerificationRequest, RegistrationResponse, TokenResponse, ResendVerificationRequest,
     PasswordResetRequest, PasswordResetVerify, PasswordResetResponse
 )
-from app.schemas.user import UserUpdate, UserResponse
 from app.services.email import email_service
 import secrets
 from datetime import datetime, timedelta
@@ -175,46 +174,6 @@ async def resend_verification(
     """
     auth_service = AuthService(db)
     return await auth_service.resend_verification(request.email)
-
-
-@router.get("/me", response_model=dict)
-async def get_current_user(
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Get current user profile.
-    
-    Args:
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        dict: Current user information
-    """
-    user = db.query(User).filter(User.id == current_user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    return {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "phone": user.phone,
-        "country_code": user.country_code,
-        "is_active": user.is_active,
-        "is_verified": user.is_verified,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "bio": user.bio,
-        "avatar_url": user.avatar_url,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at
-    }
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -400,73 +359,4 @@ async def verify_password_reset(
     
     return {
         "message": "Password has been reset successfully. You can now login with your new password."
-    }
-
-
-@router.put("/profile", response_model=UserResponse, status_code=status.HTTP_200_OK)
-async def update_profile(
-    profile_data: UserUpdate,
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Update user profile.
-    
-    Args:
-        profile_data: Profile update data
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        UserResponse: Updated user information
-        
-    Raises:
-        HTTPException: If update fails
-    """
-    # Find the user
-    user = db.query(User).filter(User.id == current_user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    # Update only provided fields
-    update_data = profile_data.model_dump(exclude_unset=True)
-    
-    # Check if username is being updated and if it's already taken
-    if 'username' in update_data and update_data['username'] != user.username:
-        existing_user = db.query(User).filter(
-            User.username == update_data['username']
-        ).first()
-        
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username is already taken"
-            )
-    
-    # Update user fields
-    for field, value in update_data.items():
-        setattr(user, field, value)
-    
-    user.updated_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(user)
-    
-    return {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "phone": user.phone,
-        "bio": user.bio,
-        "avatar_url": user.avatar_url,
-        "is_active": user.is_active,
-        "is_verified": user.is_verified,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at
     }
