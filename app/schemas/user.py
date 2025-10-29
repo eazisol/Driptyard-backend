@@ -76,6 +76,8 @@ class UserResponse(BaseResponseSchema):
     phone: Optional[str] = Field(None, description="Phone number")
     bio: Optional[str] = Field(None, description="User bio")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
+    company_name: Optional[str] = Field(None, description="Company name")
+    sin_number: Optional[str] = Field(None, description="Social Insurance Number")
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
 

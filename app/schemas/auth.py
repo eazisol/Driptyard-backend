@@ -32,6 +32,8 @@ class UserRegister(BaseCreateSchema):
     username: str = Field(..., min_length=3, max_length=50, description="Username")
     phone: str = Field(..., description="Phone number with country code")
     country_code: str = Field(..., min_length=2, max_length=3, description="Country code")
+    company_name: str | None = Field(None, max_length=200, description="Company name (optional)")
+    sin_number: str | None = Field(None, max_length=20, description="Social Insurance Number (optional)")
     
     @field_validator('username')
     @classmethod

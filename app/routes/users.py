@@ -55,6 +55,8 @@ async def get_current_user(
         "last_name": user.last_name,
         "bio": user.bio,
         "avatar_url": user.avatar_url,
+        "company_name": user.company_name,
+        "sin_number": user.sin_number,
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }
@@ -165,6 +167,8 @@ async def update_user_profile(
         "last_name": user.last_name,
         "bio": user.bio,
         "avatar_url": user.avatar_url,
+        "company_name": user.company_name,
+        "sin_number": user.sin_number,
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }
@@ -267,6 +271,8 @@ async def upload_avatar(
         "last_name": user.last_name,
         "bio": user.bio,
         "avatar_url": user.avatar_url,
+        "company_name": user.company_name,
+        "sin_number": user.sin_number,
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }

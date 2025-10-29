@@ -22,6 +22,8 @@ class User(BaseModel):
     hashed_password = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=True)
     country_code = Column(String(3), nullable=True)
+    company_name = Column(String(200), nullable=True)
+    sin_number = Column(String(20), nullable=True)
     
     # User status
     is_active = Column(Boolean, default=True, nullable=False)
@@ -86,6 +88,8 @@ class RegistrationData(BaseModel):
     hashed_password = Column(String(255), nullable=False)
     phone = Column(String(20), nullable=True)
     country_code = Column(String(3), nullable=True)
+    company_name = Column(String(200), nullable=True)
+    sin_number = Column(String(20), nullable=True)
     
     # Store additional data as JSON
     additional_data = Column(JSON, nullable=True)

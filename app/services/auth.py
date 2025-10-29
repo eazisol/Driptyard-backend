@@ -87,7 +87,9 @@ class AuthService:
                 username=user_data.username,
                 hashed_password=hashed_password,
                 phone=user_data.phone,
-                country_code=user_data.country_code
+                country_code=user_data.country_code,
+                company_name=user_data.company_name,
+                sin_number=user_data.sin_number
             )
             
             # Store verification record and registration data
@@ -185,6 +187,8 @@ class AuthService:
             hashed_password=registration_data.hashed_password,
             phone=registration_data.phone,
             country_code=registration_data.country_code,
+            company_name=registration_data.company_name,
+            sin_number=registration_data.sin_number,
             is_verified=True,
             is_active=True
         )
@@ -213,6 +217,8 @@ class AuthService:
             "last_name": user.last_name,
             "bio": user.bio,
             "avatar_url": user.avatar_url,
+            "company_name": user.company_name,
+            "sin_number": user.sin_number,
             "created_at": user.created_at,
             "updated_at": user.updated_at
         }

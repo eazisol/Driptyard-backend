@@ -103,6 +103,8 @@ async def login(
         "last_name": user.last_name,
         "bio": user.bio,
         "avatar_url": user.avatar_url,
+        "company_name": user.company_name,
+        "sin_number": user.sin_number,
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }
@@ -218,6 +220,8 @@ async def refresh_token(
         "last_name": user.last_name,
         "bio": user.bio,
         "avatar_url": user.avatar_url,
+        "company_name": user.company_name,
+        "sin_number": user.sin_number,
         "created_at": user.created_at,
         "updated_at": user.updated_at
     }
