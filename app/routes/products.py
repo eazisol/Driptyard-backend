@@ -7,7 +7,8 @@ This module contains product CRUD endpoints and listing APIs.
 from typing import Optional, List
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 import math
@@ -344,21 +345,14 @@ async def get_product(
 
 @router.post("/", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
-    title: str = Form(...),
-    description: str = Form(...),
-    price: str = Form(...),
-    category: str = Form(...),
-    condition: str = Form(...),
-    deal_method: str = Form(..., alias="dealMethod"),
-    meetup_date: Optional[str] = Form(None, alias="meetupDate"),
-    meetup_location: Optional[str] = Form(None, alias="meetupLocation"),
-    meetup_time: Optional[str] = Form(None, alias="meetupTime"),
-    images: List[UploadFile] = File(None),
+    request: Request,
     current_user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Create a new product listing with image uploads.
+    
+    Send as multipart/form-data.
     
     Args:
         title: Product title
@@ -366,17 +360,38 @@ async def create_product(
         price: Product price
         category: Product category
         condition: Product condition
-        deal_method: Deal method (Meet Up or Delivery)
-        meetup_date: Optional meetup date
-        meetup_location: Optional meetup location
-        meetup_time: Optional meetup time
-        images: Optional list of product images (max 10)
+        dealMethod: Deal method (Meet Up or Delivery)
+        meetupDate: Optional meetup date
+        meetupLocation: Optional meetup location
+        meetupTime: Optional meetup time
+        images: List of product images (minimum 4, maximum 10)
         current_user_id: Current authenticated user ID
         db: Database session
         
     Returns:
         ProductDetailResponse: Created product details
     """
+    # Parse form data manually to handle both form fields and files
+    form = await request.form()
+    
+    # Extract form fields
+    title = form.get("title")
+    description = form.get("description")
+    price = form.get("price")
+    category = form.get("category")
+    condition = form.get("condition")
+    dealMethod = form.get("dealMethod")
+    meetupDate = form.get("meetupDate")
+    meetupLocation = form.get("meetupLocation")
+    meetupTime = form.get("meetupTime")
+    
+    # Validate required fields
+    if not all([title, description, price, category, condition, dealMethod]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required fields: title, description, price, category, condition, dealMethod"
+        )
+    
     # Verify user exists
     user = db.query(User).filter(User.id == UUID(current_user_id)).first()
     if not user:
@@ -394,11 +409,38 @@ async def create_product(
             detail="Invalid price format"
         )
     
-    # Handle image uploads if provided
+    # Handle image uploads - parse from multipart form
+    # Frontend may send as 'images', 'images[0]', 'images[1]', etc.
     image_urls = []
-    if images:
+    files_to_process: List[UploadFile] = []
+    
+    # Debug: Log what we're receiving
+    debug_info = []
+    for key, value in form.multi_items():
+        # Check by type name instead of isinstance since there might be import issues
+        type_name = type(value).__name__
+        is_upload = type_name == "UploadFile" or hasattr(value, 'file')
+        debug_info.append(f"Key: {key}, Type: {type_name}, IsUploadFile: {is_upload}, HasFile: {hasattr(value, 'file')}")
+        
+        # Check if it's a file upload by type name or has file attribute
+        if type_name == "UploadFile" or hasattr(value, 'file'):
+            # Check if field name matches 'images' pattern
+            if key == "images" or key.startswith("images["):
+                # Verify the file has a filename (not an empty upload)
+                if hasattr(value, 'filename') and value.filename:
+                    files_to_process.append(value)
+                    debug_info.append(f"  -> Added: Filename: {value.filename}")
+    
+    # Validate minimum number of images (4 required)
+    if len(files_to_process) < 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Minimum 4 product images are required. Received {len(files_to_process)} valid image(s). Debug: {debug_info}"
+        )
+
+    if files_to_process:
         # Validate number of images
-        if len(images) > 10:
+        if len(files_to_process) > 10:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Maximum 10 images allowed per product"
@@ -406,7 +448,7 @@ async def create_product(
         
         # Validate and upload images
         s3_service = get_s3_service()
-        for img in images:
+        for img in files_to_process:
             if not img.content_type or not img.content_type.startswith('image/'):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -430,10 +472,10 @@ async def create_product(
         price=price_decimal,
         category=category,
         condition=condition,
-        deal_method=deal_method,
-        meetup_date=meetup_date,
-        meetup_location=meetup_location,
-        meetup_time=meetup_time,
+        deal_method=dealMethod,
+        meetup_date=meetupDate,
+        meetup_location=meetupLocation,
+        meetup_time=meetupTime,
         images=image_urls,
         stock_quantity=1,
         stock_status="In Stock"
