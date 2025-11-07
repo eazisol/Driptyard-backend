@@ -62,12 +62,15 @@ The API is now organized into 3 main routers with clear separation of concerns:
   - Required: `title`, `description`, `price`, `category`, `condition`, `dealMethod`
   - Optional: `meetupDate`, `meetupLocation`, `meetupTime`, `images[]` (up to 10 files)
   - Automatically uploads images to S3
+  - Sends listing verification code to seller email; listing stays inactive until verified
 - `PUT /products/{product_id}` - Update product info (JSON only, no images)
   - Content-Type: `application/json`
 - `POST /products/{product_id}/images` - Add/update product images
   - Content-Type: `multipart/form-data`
   - Accepts multiple image files (max 10 total per product)
   - Automatically uploads to S3 and updates product
+- `POST /products/{product_id}/verification/send` - Send or resend listing verification code
+- `POST /products/{product_id}/verification` - Verify listing with email code (activates listing)
 - `DELETE /products/{product_id}` - Soft delete product (marks as inactive)
 
 ---

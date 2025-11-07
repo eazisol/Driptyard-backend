@@ -5,7 +5,7 @@ This module contains all product-related request and response schemas.
 """
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from decimal import Decimal
 from datetime import datetime
 
@@ -47,7 +47,7 @@ class ProductCreate(BaseCreateSchema):
 class ProductUpdate(BaseUpdateSchema):
     """Schema for updating a product."""
     
-    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Product name")
+    title: Optional[str] = Field(None, min_length=1, max_length=255, description="Product title")
     description: Optional[str] = Field(None, description="Product description")
     price: Optional[Decimal] = Field(None, gt=0, description="Product price")
     category: Optional[str] = Field(None, max_length=100, description="Product category")
@@ -76,6 +76,19 @@ class ProductUpdate(BaseUpdateSchema):
     
     is_active: Optional[bool] = Field(None, description="Whether product is active")
     is_featured: Optional[bool] = Field(None, description="Whether product is featured")
+
+
+class ProductVerificationRequest(BaseModel):
+    """Schema for verifying a product using a code."""
+
+    verification_code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+
+    @field_validator('verification_code')
+    @classmethod
+    def validate_verification_code(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("Verification code must contain only digits")
+        return value
 
 
 class ProductListResponse(BaseModel):
@@ -129,6 +142,7 @@ class ProductDetailResponse(BaseResponseSchema):
     is_active: bool = Field(..., description="Whether product is active")
     is_sold: bool = Field(..., description="Whether product is sold")
     is_featured: bool = Field(..., description="Whether product is featured")
+    is_verified: bool = Field(..., description="Whether product has been verified")
     
     # Seller info
     seller: SellerInfo = Field(..., description="Seller information")

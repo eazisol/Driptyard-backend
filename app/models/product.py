@@ -4,7 +4,7 @@ Product-related database models.
 This module contains Product models for the e-commerce platform.
 """
 
-from sqlalchemy import Column, String, Text, Numeric, Boolean, Integer, Float, ForeignKey
+from sqlalchemy import Column, String, Text, Numeric, Boolean, Integer, Float, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.orm import relationship
 
@@ -33,6 +33,10 @@ class Product(BaseModel):
     is_active = Column(Boolean, default=True, nullable=False)
     is_sold = Column(Boolean, default=False, nullable=False)
     is_featured = Column(Boolean, default=False, nullable=False, index=True)
+    is_verified = Column(Boolean, default=False, nullable=False, index=True)
+    verification_code = Column(String(6), nullable=True)
+    verification_expires_at = Column(DateTime, nullable=True)
+    verification_attempts = Column(Integer, default=0, nullable=False)
     
     # Stock management
     stock_quantity = Column(Integer, default=1, nullable=False)

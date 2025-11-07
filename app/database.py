@@ -99,6 +99,14 @@ class Settings(BaseSettings):
         default=15,
         description="Email verification code expiry time in minutes"
     )
+    PRODUCT_VERIFICATION_CODE_EXPIRY_MINUTES: int = Field(
+        default=30,
+        description="Product listing verification code expiry time in minutes"
+    )
+    PRODUCT_VERIFICATION_MAX_ATTEMPTS: int = Field(
+        default=5,
+        description="Maximum allowed attempts for product verification"
+    )
     
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 

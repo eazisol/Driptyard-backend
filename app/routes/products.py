@@ -7,13 +7,16 @@ This module contains product CRUD endpoints and listing APIs.
 from typing import Optional, List
 from uuid import UUID
 from decimal import Decimal
+from datetime import datetime, timedelta
+import random
+import string
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 import math
 
-from app.database import get_db
+from app.database import get_db, settings
 from app.security import get_current_user_id
 from app.models.product import Product
 from app.models.user import User
@@ -23,11 +26,23 @@ from app.schemas.product import (
     ProductListResponse,
     ProductDetailResponse,
     ProductPaginationResponse,
-    SellerInfo
+    SellerInfo,
+    ProductVerificationRequest
 )
 from app.services.s3 import get_s3_service
+from app.services.email import email_service
 
 router = APIRouter()
+
+
+def _generate_verification_code() -> str:
+    """Generate a 6-digit numeric verification code."""
+    return ''.join(random.choices(string.digits, k=6))
+
+
+def _get_verification_expiry() -> datetime:
+    """Return the expiry datetime for product verification codes."""
+    return datetime.utcnow() + timedelta(minutes=settings.PRODUCT_VERIFICATION_CODE_EXPIRY_MINUTES)
 
 
 def get_seller_info(user: User) -> SellerInfo:
@@ -80,6 +95,7 @@ def product_to_detail_response(product: Product, seller: User) -> ProductDetailR
         is_active=product.is_active,
         is_sold=product.is_sold,
         is_featured=product.is_featured,
+        is_verified=product.is_verified,
         seller=get_seller_info(seller),
         created_at=product.created_at,
         updated_at=product.updated_at
@@ -248,7 +264,7 @@ async def list_products(
         search_term = f"%{search}%"
         query = query.filter(
             or_(
-                Product.name.ilike(search_term),
+                Product.title.ilike(search_term),
                 Product.description.ilike(search_term),
                 Product.brand.ilike(search_term)
             )
@@ -370,6 +386,10 @@ async def create_product(
         
     Returns:
         ProductDetailResponse: Created product details
+
+    Notes:
+        A verification code is emailed to the seller after creation. The product
+        remains inactive until the code is confirmed via the verification endpoint.
     """
     # Parse form data manually to handle both form fields and files
     form = await request.form()
@@ -392,14 +412,22 @@ async def create_product(
             detail="Missing required fields: title, description, price, category, condition, dealMethod"
         )
     
-    # Verify user exists
-    user = db.query(User).filter(User.id == UUID(current_user_id)).first()
+    # Verify user exists and fetch UUID instance
+    try:
+        user_uuid = UUID(current_user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier"
+        )
+
+    user = db.query(User).filter(User.id == user_uuid).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     # Convert price to Decimal
     try:
         price_decimal = Decimal(price)
@@ -465,8 +493,11 @@ async def create_product(
                 )
     
     # Create product
+    verification_code = _generate_verification_code()
+    verification_expires_at = _get_verification_expiry()
+
     product = Product(
-        owner_id=UUID(current_user_id),
+        owner_id=user_uuid,
         title=title,
         description=description,
         price=price_decimal,
@@ -478,14 +509,144 @@ async def create_product(
         meetup_time=meetupTime,
         images=image_urls,
         stock_quantity=1,
-        stock_status="In Stock"
+        stock_status="In Stock",
+        is_active=False,
+        is_verified=False,
+        verification_code=verification_code,
+        verification_expires_at=verification_expires_at,
+        verification_attempts=0
     )
     
     db.add(product)
+    db.flush()
+
+    email_sent = email_service.send_product_verification_email(
+        email=user.email,
+        product_title=title,
+        verification_code=verification_code
+    )
+
+    if not email_sent:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send verification email. Please try again later."
+        )
+
     db.commit()
     db.refresh(product)
     
     return product_to_detail_response(product, user)
+
+
+@router.post("/{product_id}/verification/send", status_code=status.HTTP_200_OK)
+async def send_product_verification_code(
+    product_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """Send or resend the verification code for a product listing."""
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+
+    product = db.query(Product).filter(Product.id == product_uuid).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    if str(product.owner_id) != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
+
+    if product.is_verified:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product is already verified")
+
+    user = db.query(User).filter(User.id == product.owner_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
+
+    product.verification_code = _generate_verification_code()
+    product.verification_expires_at = _get_verification_expiry()
+    product.verification_attempts = 0
+    product.is_active = False
+
+    db.flush()
+
+    email_sent = email_service.send_product_verification_email(
+        email=user.email,
+        product_title=product.title,
+        verification_code=product.verification_code
+    )
+
+    if not email_sent:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send verification email")
+
+    db.commit()
+
+    return {"message": "Verification code sent to your registered email"}
+
+
+@router.post("/{product_id}/verification", response_model=ProductDetailResponse)
+async def verify_product_listing(
+    product_id: str,
+    verification_data: ProductVerificationRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """Verify a product listing using the received verification code."""
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+
+    product = db.query(Product).filter(Product.id == product_uuid).first()
+    if not product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    if str(product.owner_id) != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
+
+    if product.is_verified:
+        seller = db.query(User).filter(User.id == product.owner_id).first()
+        if not seller:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
+        return product_to_detail_response(product, seller)
+
+    if not product.verification_code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found. Request a new code.")
+
+    if product.verification_expires_at and datetime.utcnow() > product.verification_expires_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Request a new code.")
+
+    if product.verification_attempts >= settings.PRODUCT_VERIFICATION_MAX_ATTEMPTS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum verification attempts reached. Request a new code.")
+
+    if product.verification_code != verification_data.verification_code:
+        product.verification_attempts += 1
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+
+    product.is_verified = True
+    product.is_active = True
+    product.verification_code = None
+    product.verification_expires_at = None
+    product.verification_attempts = 0
+
+    db.commit()
+    db.refresh(product)
+
+    seller = db.query(User).filter(User.id == product.owner_id).first()
+    if not seller:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
+
+    return product_to_detail_response(product, seller)
 
 
 @router.put("/{product_id}", response_model=ProductDetailResponse)

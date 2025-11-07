@@ -222,6 +222,20 @@ class EmailService:
         
         return self._send_email(email, subject, html_content)
 
+    def send_product_verification_email(self, email: str, product_title: str, verification_code: str) -> bool:
+        """Send product listing verification code."""
+        subject = "Verify Your Product Listing - Driptyard"
+
+        template_content = self._load_template("product_verification.html")
+        template = Template(template_content)
+        html_content = template.render(
+            verification_code=verification_code,
+            email=email,
+            product_title=product_title
+        )
+
+        return self._send_email(email, subject, html_content)
+
 
 # Global email service instance
 email_service = EmailService()
