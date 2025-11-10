@@ -323,44 +323,54 @@ async def verify_password_reset(
     Raises:
         HTTPException: If verification or password update fails
     """
-    # Find the reset token
-    token_record = db.query(PasswordResetToken).filter(
-        PasswordResetToken.email == request.email,
-        PasswordResetToken.reset_token == request.reset_token,
-        PasswordResetToken.is_used == False
-    ).first()
-    
-    if not token_record:
+    try:
+        # Find the reset token
+        token_record = db.query(PasswordResetToken).filter(
+            PasswordResetToken.email == request.email,
+            PasswordResetToken.reset_token == request.reset_token,
+            PasswordResetToken.is_used == False
+        ).first()
+
+        if not token_record:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+
+        # Check if token is expired
+        if token_record.is_expired():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reset token has expired. Please request a new one."
+            )
+
+        # Find the user
+        user = db.query(User).filter(User.email == request.email).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Update user's password
+        user.hashed_password = get_password_hash(request.new_password)
+        user.updated_at = datetime.utcnow()
+
+        # Mark token as used
+        token_record.is_used = True
+
+        db.commit()
+
+        return {
+            "message": "Password has been reset successfully. You can now login with your new password."
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while resetting the password."
         )
-    
-    # Check if token is expired
-    if token_record.is_expired():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reset token has expired. Please request a new one."
-        )
-    
-    # Find the user
-    user = db.query(User).filter(User.email == request.email).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    # Update user's password
-    user.hashed_password = get_password_hash(request.new_password)
-    user.updated_at = datetime.utcnow()
-    
-    # Mark token as used
-    token_record.is_used = True
-    
-    db.commit()
-    
-    return {
-        "message": "Password has been reset successfully. You can now login with your new password."
-    }

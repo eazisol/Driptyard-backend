@@ -5,10 +5,11 @@ This module creates and configures the FastAPI application with all
 necessary middleware, routers, and exception handlers.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import uvicorn
 
 from app.database import settings
@@ -58,9 +59,35 @@ def create_app() -> FastAPI:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request, exc: HTTPException):
         """Handle HTTP exceptions."""
+        if isinstance(exc.detail, dict):
+            content = exc.detail
+        else:
+            content = {"message": str(exc.detail) if exc.detail else "An error occurred"}
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": exc.detail}
+            content=content
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc: RequestValidationError):
+        """Handle request validation errors with consistent error structure."""
+        errors = []
+        for error in exc.errors():
+            location = list(error.get("loc", []))
+            if location and location[0] in {"body", "query", "path"}:
+                location = location[1:]
+            field_path = ".".join(str(part) for part in location) or "request"
+            errors.append({
+                "field": field_path,
+                "message": error.get("msg", "Invalid value")
+            })
+
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "message": "Invalid request payload",
+                "errors": errors
+            }
         )
     
     # Health check endpoint
