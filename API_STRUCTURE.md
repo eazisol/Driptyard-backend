@@ -52,6 +52,9 @@ The API is now organized into 3 main routers with clear separation of concerns:
   - Query params: `page`, `page_size`
 - `GET /products/recommended` - Get recommended products (paginated)
   - Query params: `page`, `page_size`
+- `GET /products/my-listings` - List products created by the authenticated user (paginated)
+  - Requires authentication
+  - Query params: `page`, `page_size`, `status` (`active`, `inactive`, `sold`, `verification_pending`), `search`
 - `GET /products/` - List all products with filters (paginated)
   - Query params: `page`, `page_size`, `category`, `search`, `min_price`, `max_price`, `condition`
 - `GET /products/{product_id}` - Get detailed product info
