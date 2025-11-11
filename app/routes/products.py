@@ -221,7 +221,8 @@ async def get_recommended_products(
     query = db.query(Product).filter(
         and_(
             Product.is_active == True,
-            Product.is_sold == False
+            Product.is_sold == False,
+            Product.is_featured == False
         )
     ).order_by(Product.rating.desc(), Product.created_at.desc())
     
