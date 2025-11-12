@@ -213,6 +213,7 @@ class AuthService:
             "country_code": user.country_code,
             "is_active": user.is_active,
             "is_verified": user.is_verified,
+            "is_admin": user.is_admin,
             "first_name": user.first_name,
             "last_name": user.last_name,
             "bio": user.bio,

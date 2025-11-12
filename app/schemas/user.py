@@ -80,6 +80,7 @@ class UserResponse(BaseResponseSchema):
     sin_number: Optional[str] = Field(None, description="Social Insurance Number")
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
+    is_admin: bool = Field(..., description="Whether user is an admin")
 
 
 class UserPublicResponse(BaseResponseSchema):
