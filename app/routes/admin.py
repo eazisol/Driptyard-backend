@@ -6,15 +6,22 @@ This module contains admin-only endpoints for managing the platform.
 
 from datetime import datetime, timedelta
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
+import math
 
 from app.database import get_db
 from app.security import get_current_user_id
 from app.models.user import User
 from app.models.product import Product
-from app.schemas.admin import StatsOverviewResponse
+from app.schemas.admin import (
+    StatsOverviewResponse,
+    AdminProductResponse,
+    AdminProductListResponse,
+    AdminProductUpdateRequest
+)
 
 router = APIRouter()
 
@@ -166,4 +173,244 @@ async def get_stats_overview(
         pending_verifications=pending_verifications,
         flagged_content_count=flagged_content_count
     )
+
+
+@router.get("/products", response_model=AdminProductListResponse)
+async def list_admin_products(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by title"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    is_sold: Optional[bool] = Query(None, description="Filter by sold status"),
+    is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
+    is_flagged: Optional[bool] = Query(None, description="Filter by flagged status"),
+    stock_status: Optional[str] = Query(None, description="Filter by stock status")
+):
+    """
+    List all products with filtering and pagination (Admin only).
+    
+    Returns a paginated list of products with various filter options.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        search: Search term for product title
+        category: Filter by category
+        is_active: Filter by active status
+        is_sold: Filter by sold status
+        is_verified: Filter by verified status
+        is_flagged: Filter by flagged status
+        stock_status: Filter by stock status (In Stock, Out of Stock, Limited)
+        
+    Returns:
+        AdminProductListResponse: Paginated list of products
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Build query
+    query = db.query(Product)
+    
+    # Apply filters
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(Product.title.ilike(search_term))
+    
+    if category:
+        query = query.filter(Product.category == category)
+    
+    if is_active is not None:
+        query = query.filter(Product.is_active == is_active)
+    
+    if is_sold is not None:
+        query = query.filter(Product.is_sold == is_sold)
+    
+    if is_verified is not None:
+        query = query.filter(Product.is_verified == is_verified)
+    
+    if is_flagged is not None:
+        query = query.filter(Product.is_flagged == is_flagged)
+    
+    if stock_status:
+        query = query.filter(Product.stock_status == stock_status)
+    
+    # Get total count
+    total = query.count()
+    
+    # Calculate offset and pagination
+    offset = (page - 1) * page_size
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+    
+    # Get paginated results
+    products = query.order_by(Product.created_at.desc()).offset(offset).limit(page_size).all()
+    
+    # Convert to response format
+    product_list = []
+    for product in products:
+        product_list.append(AdminProductResponse(
+            id=str(product.id),
+            title=product.title,
+            price=product.price,
+            category=product.category,
+            condition=product.condition,
+            stock_quantity=product.stock_quantity,
+            stock_status=product.stock_status,
+            is_active=product.is_active,
+            is_sold=product.is_sold,
+            is_verified=product.is_verified,
+            is_flagged=product.is_flagged,
+            images=product.images or [],
+            owner_id=str(product.owner_id),
+            created_at=product.created_at
+        ))
+    
+    return AdminProductListResponse(
+        products=product_list,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
+
+
+@router.patch("/products/{product_id}", response_model=AdminProductResponse)
+async def update_admin_product(
+    product_id: str,
+    update_data: AdminProductUpdateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Update product status fields (Admin only).
+    
+    Allows admins to update product status fields like is_active, is_verified,
+    is_flagged, and stock_status.
+    
+    Args:
+        product_id: Product UUID
+        update_data: Product update data
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminProductResponse: Updated product
+        
+    Raises:
+        HTTPException: If user is not admin or product not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get product
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+    
+    product = db.query(Product).filter(Product.id == product_uuid).first()
+    
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    
+    # Update fields
+    update_dict = update_data.model_dump(exclude_unset=True)
+    
+    if "is_active" in update_dict:
+        product.is_active = update_dict["is_active"]
+    
+    if "is_verified" in update_dict:
+        product.is_verified = update_dict["is_verified"]
+    
+    if "is_flagged" in update_dict:
+        product.is_flagged = update_dict["is_flagged"]
+    
+    if "stock_status" in update_dict:
+        # Validate stock_status
+        valid_statuses = ["In Stock", "Out of Stock", "Limited"]
+        if update_dict["stock_status"] not in valid_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid stock_status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        product.stock_status = update_dict["stock_status"]
+    
+    db.commit()
+    db.refresh(product)
+    
+    return AdminProductResponse(
+        id=str(product.id),
+        title=product.title,
+        price=product.price,
+        category=product.category,
+        condition=product.condition,
+        stock_quantity=product.stock_quantity,
+        stock_status=product.stock_status,
+        is_active=product.is_active,
+        is_sold=product.is_sold,
+        is_verified=product.is_verified,
+        is_flagged=product.is_flagged,
+        images=product.images or [],
+        owner_id=str(product.owner_id),
+        created_at=product.created_at
+    )
+
+
+@router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_product(
+    product_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a product (Admin only).
+    
+    Permanently deletes a product from the database.
+    
+    Args:
+        product_id: Product UUID
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Raises:
+        HTTPException: If user is not admin or product not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get product
+    try:
+        product_uuid = UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+    
+    product = db.query(Product).filter(Product.id == product_uuid).first()
+    
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    
+    # Delete product
+    db.delete(product)
+    db.commit()
+    
+    return None
 
