@@ -34,6 +34,7 @@ class Product(BaseModel):
     is_sold = Column(Boolean, default=False, nullable=False)
     is_featured = Column(Boolean, default=False, nullable=False, index=True)
     is_verified = Column(Boolean, default=False, nullable=False, index=True)
+    is_flagged = Column(Boolean, default=False, nullable=False, index=True)
     verification_code = Column(String(6), nullable=True)
     verification_expires_at = Column(DateTime, nullable=True)
     verification_attempts = Column(Integer, default=0, nullable=False)
