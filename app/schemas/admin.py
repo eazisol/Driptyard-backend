@@ -61,3 +61,38 @@ class AdminProductUpdateRequest(BaseModel):
     is_flagged: Optional[bool] = Field(None, description="Whether product is flagged")
     stock_status: Optional[str] = Field(None, description="Stock status: In Stock, Out of Stock, Limited")
 
+
+class AdminUserResponse(BaseModel):
+    """Schema for admin user list item."""
+    
+    id: str = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    username: str = Field(..., description="Username")
+    first_name: Optional[str] = Field(None, description="First name")
+    last_name: Optional[str] = Field(None, description="Last name")
+    is_active: bool = Field(..., description="Whether user is active")
+    is_verified: bool = Field(..., description="Whether user is verified")
+    is_admin: bool = Field(..., description="Whether user is admin")
+    avatar_url: Optional[str] = Field(None, description="Avatar URL")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class AdminUserListResponse(BaseModel):
+    """Schema for admin user list with pagination."""
+    
+    users: List[AdminUserResponse] = Field(..., description="List of users")
+    total: int = Field(..., description="Total number of users")
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Items per page")
+    total_pages: int = Field(..., description="Total number of pages")
+    
+    class Config:
+        from_attributes = True
+
+
+class AdminUserUpdateRequest(BaseModel):
+    """Schema for admin user status update."""
+    
+    is_active: Optional[bool] = Field(None, description="Whether user is active")
+    is_verified: Optional[bool] = Field(None, description="Whether user is verified")
+

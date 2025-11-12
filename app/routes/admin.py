@@ -20,7 +20,10 @@ from app.schemas.admin import (
     StatsOverviewResponse,
     AdminProductResponse,
     AdminProductListResponse,
-    AdminProductUpdateRequest
+    AdminProductUpdateRequest,
+    AdminUserResponse,
+    AdminUserListResponse,
+    AdminUserUpdateRequest
 )
 
 router = APIRouter()
@@ -410,6 +413,353 @@ async def delete_admin_product(
     
     # Delete product
     db.delete(product)
+    db.commit()
+    
+    return None
+
+
+@router.get("/users", response_model=AdminUserListResponse)
+async def list_admin_users(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by email or username"),
+    status: Optional[str] = Query(None, description="Filter by status: 'active' or 'inactive'"),
+    is_verified: Optional[bool] = Query(None, description="Filter by verified status")
+):
+    """
+    List all users with filtering and pagination (Admin only).
+    
+    Returns a paginated list of users with various filter options.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        search: Search term for email or username
+        status: Filter by status ('active' maps to is_active=True, 'inactive' maps to is_active=False)
+        is_verified: Filter by verified status
+        
+    Returns:
+        AdminUserListResponse: Paginated list of users
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Build query
+    query = db.query(User)
+    
+    # Apply filters
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                User.email.ilike(search_term),
+                User.username.ilike(search_term)
+            )
+        )
+    
+    if status:
+        if status.lower() == "active":
+            query = query.filter(User.is_active == True)
+        elif status.lower() == "inactive":
+            query = query.filter(User.is_active == False)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status. Must be 'active' or 'inactive'"
+            )
+    
+    if is_verified is not None:
+        query = query.filter(User.is_verified == is_verified)
+    
+    # Get total count
+    total = query.count()
+    
+    # Calculate offset and pagination
+    offset = (page - 1) * page_size
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+    
+    # Get paginated results
+    users = query.order_by(User.created_at.desc()).offset(offset).limit(page_size).all()
+    
+    # Convert to response format
+    user_list = []
+    for user in users:
+        user_list.append(AdminUserResponse(
+            id=str(user.id),
+            email=user.email,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            is_admin=user.is_admin,
+            avatar_url=user.avatar_url,
+            created_at=user.created_at
+        ))
+    
+    return AdminUserListResponse(
+        users=user_list,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserResponse)
+async def update_admin_user(
+    user_id: str,
+    update_data: AdminUserUpdateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Update user status fields (Admin only).
+    
+    Allows admins to update user status fields like is_active and is_verified.
+    
+    Args:
+        user_id: User UUID
+        update_data: User update data
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminUserResponse: Updated user
+        
+    Raises:
+        HTTPException: If user is not admin or user not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get user
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    user = db.query(User).filter(User.id == user_uuid).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Update fields
+    update_dict = update_data.model_dump(exclude_unset=True)
+    
+    if "is_active" in update_dict:
+        user.is_active = update_dict["is_active"]
+    
+    if "is_verified" in update_dict:
+        user.is_verified = update_dict["is_verified"]
+    
+    db.commit()
+    db.refresh(user)
+    
+    return AdminUserResponse(
+        id=str(user.id),
+        email=user.email,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_admin=user.is_admin,
+        avatar_url=user.avatar_url,
+        created_at=user.created_at
+    )
+
+
+@router.post("/users/{user_id}/ban", response_model=AdminUserResponse)
+async def ban_admin_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Ban a user (Admin only).
+    
+    Sets user's is_active to False (bans the user).
+    
+    Args:
+        user_id: User UUID
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminUserResponse: Updated user
+        
+    Raises:
+        HTTPException: If user is not admin or user not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get user
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    user = db.query(User).filter(User.id == user_uuid).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Prevent admin from banning themselves
+    if str(user.id) == current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot ban yourself"
+        )
+    
+    # Ban user (set is_active to False)
+    user.is_active = False
+    db.commit()
+    db.refresh(user)
+    
+    return AdminUserResponse(
+        id=str(user.id),
+        email=user.email,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_admin=user.is_admin,
+        avatar_url=user.avatar_url,
+        created_at=user.created_at
+    )
+
+
+@router.post("/users/{user_id}/unban", response_model=AdminUserResponse)
+async def unban_admin_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Unban a user (Admin only).
+    
+    Sets user's is_active to True (unbans the user).
+    
+    Args:
+        user_id: User UUID
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminUserResponse: Updated user
+        
+    Raises:
+        HTTPException: If user is not admin or user not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get user
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    user = db.query(User).filter(User.id == user_uuid).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Unban user (set is_active to True)
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    
+    return AdminUserResponse(
+        id=str(user.id),
+        email=user.email,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_admin=user.is_admin,
+        avatar_url=user.avatar_url,
+        created_at=user.created_at
+    )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a user (Admin only).
+    
+    Permanently deletes a user from the database.
+    
+    Args:
+        user_id: User UUID
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Raises:
+        HTTPException: If user is not admin or user not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get user
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    user = db.query(User).filter(User.id == user_uuid).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Prevent admin from deleting themselves
+    if str(user.id) == current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete yourself"
+        )
+    
+    # Delete user
+    db.delete(user)
     db.commit()
     
     return None
