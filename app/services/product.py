@@ -1,0 +1,1055 @@
+"""
+Product service for business logic operations.
+
+This module provides product-related business logic including CRUD operations,
+validation, verification, and data transformations.
+"""
+
+from typing import Optional, List, Any, Dict, Tuple
+from uuid import UUID
+from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta
+import random
+import string
+import json
+import math
+from fastapi import UploadFile, HTTPException, status
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
+
+from app.database import settings
+from app.models.product import Product
+from app.models.user import User
+from app.schemas.product import (
+    ProductListResponse,
+    ProductDetailResponse,
+    ProductPaginationResponse,
+    SellerInfo,
+    ProductVerificationRequest,
+    ProductUpdate
+)
+from app.services.s3 import get_s3_service
+from app.services.email import email_service
+
+
+class ProductService:
+    """Service class for product operations."""
+    
+    def __init__(self, db: Session):
+        """
+        Initialize product service.
+        
+        Args:
+            db: Database session
+        """
+        self.db = db
+    
+    def _generate_verification_code(self) -> str:
+        """Generate a 6-digit numeric verification code."""
+        return ''.join(random.choices(string.digits, k=6))
+    
+    def _get_verification_expiry(self) -> datetime:
+        """Return the expiry datetime for product verification codes."""
+        return datetime.utcnow() + timedelta(minutes=settings.PRODUCT_VERIFICATION_CODE_EXPIRY_MINUTES)
+    
+    def _parse_bool(self, value: Optional[Any], default: bool = False) -> bool:
+        """Parse a flexible truthy/falsey string into boolean."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"true", "1", "yes", "on"}
+    
+    def _get_seller_info(self, user: User) -> SellerInfo:
+        """Helper function to extract seller information."""
+        return SellerInfo(
+            id=str(user.id),
+            username=user.username,
+            rating=4.8,  # TODO: Calculate from reviews
+            total_sales=156,  # TODO: Get from orders
+            avatar_url=user.avatar_url
+        )
+    
+    def _product_to_list_response(self, product: Product, seller: User) -> ProductListResponse:
+        """Convert Product model to ProductListResponse."""
+        return ProductListResponse(
+            id=str(product.id),
+            title=product.title,
+            description=product.description[:150] + "..." if product.description and len(product.description) > 150 else product.description,
+            price=product.price,
+            condition=product.condition,
+            images=product.images or [],
+            rating=product.rating,
+            review_count=product.review_count,
+            stock_status=product.stock_status,
+            deal_method=product.deal_method,
+            product_type=product.product_type,
+            product_style=product.product_style,
+            colors=product.colors or [],
+            purchase_button_enabled=product.purchase_button_enabled,
+            seller=self._get_seller_info(seller),
+            created_at=product.created_at
+        )
+    
+    def _product_to_detail_response(self, product: Product, seller: User) -> ProductDetailResponse:
+        """Convert Product model to ProductDetailResponse."""
+        return ProductDetailResponse(
+            id=str(product.id),
+            title=product.title,
+            description=product.description,
+            price=product.price,
+            category=product.category,
+            condition=product.condition,
+            deal_method=product.deal_method,
+            meetup_date=product.meetup_date,
+            meetup_location=product.meetup_location,
+            meetup_time=product.meetup_time,
+            stock_quantity=product.stock_quantity,
+            stock_status=product.stock_status,
+            rating=product.rating,
+            review_count=product.review_count,
+            images=product.images or [],
+            is_active=product.is_active,
+            is_sold=product.is_sold,
+            is_featured=product.is_featured,
+            is_verified=product.is_verified,
+            gender=product.gender,
+            product_type=product.product_type,
+            sub_category=product.sub_category,
+            designer=product.designer,
+            size=product.size,
+            colors=product.colors or [],
+            product_style=product.product_style,
+            purchase_button_enabled=product.purchase_button_enabled,
+            delivery_method=product.delivery_method,
+            delivery_time=product.delivery_time,
+            delivery_fee=product.delivery_fee,
+            delivery_fee_type=product.delivery_fee_type,
+            tracking_provided=product.tracking_provided,
+            shipping_address=product.shipping_address,
+            meetup_locations=product.meetup_locations,
+            measurement_chest=product.measurement_chest,
+            measurement_sleeve_length=product.measurement_sleeve_length,
+            measurement_length=product.measurement_length,
+            measurement_hem=product.measurement_hem,
+            measurement_shoulders=product.measurement_shoulders,
+            seller=self._get_seller_info(seller),
+            created_at=product.created_at,
+            updated_at=product.updated_at
+        )
+    
+    def list_featured_products(self, page: int, page_size: int) -> ProductPaginationResponse:
+        """
+        Get featured products listing.
+        
+        Args:
+            page: Page number (starts from 1)
+            page_size: Number of items per page
+            
+        Returns:
+            ProductPaginationResponse: Paginated list of featured products
+        """
+        offset = (page - 1) * page_size
+        
+        query = self.db.query(Product).filter(
+            and_(
+                Product.is_featured == True,
+                Product.is_active == True,
+                Product.is_sold == False
+            )
+        ).order_by(Product.created_at.desc())
+        
+        total = query.count()
+        products = query.offset(offset).limit(page_size).all()
+        
+        items = []
+        for product in products:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if seller:
+                items.append(self._product_to_list_response(product, seller))
+        
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+        
+        return ProductPaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1
+        )
+    
+    def list_recommended_products(self, page: int, page_size: int) -> ProductPaginationResponse:
+        """
+        Get recommended products for user.
+        
+        Args:
+            page: Page number (starts from 1)
+            page_size: Number of items per page
+            
+        Returns:
+            ProductPaginationResponse: Paginated list of recommended products
+        """
+        offset = (page - 1) * page_size
+        
+        query = self.db.query(Product).filter(
+            and_(
+                Product.is_active == True,
+                Product.is_sold == False,
+                Product.is_featured == False
+            )
+        ).order_by(Product.rating.desc(), Product.created_at.desc())
+        
+        total = query.count()
+        products = query.offset(offset).limit(page_size).all()
+        
+        items = []
+        for product in products:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if seller:
+                items.append(self._product_to_list_response(product, seller))
+        
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+        
+        return ProductPaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1
+        )
+    
+    def list_user_products(
+        self,
+        user_id: str,
+        page: int,
+        page_size: int,
+        status_filter: Optional[str] = None,
+        search: Optional[str] = None
+    ) -> ProductPaginationResponse:
+        """
+        List products created by a user.
+        
+        Args:
+            user_id: User UUID string
+            page: Page number
+            page_size: Items per page
+            status_filter: Filter by status (active, inactive, sold, verification_pending)
+            search: Search term
+            
+        Returns:
+            ProductPaginationResponse: Paginated list of user's products
+            
+        Raises:
+            HTTPException: If user not found or invalid status filter
+        """
+        try:
+            owner_uuid = UUID(user_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier"
+            )
+        
+        user = self.db.query(User).filter(User.id == owner_uuid).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        query = self.db.query(Product).filter(Product.owner_id == owner_uuid)
+        
+        if status_filter:
+            normalized_status = status_filter.lower()
+            if normalized_status == "active":
+                query = query.filter(and_(Product.is_active == True, Product.is_sold == False))
+            elif normalized_status == "inactive":
+                query = query.filter(Product.is_active == False)
+            elif normalized_status == "sold":
+                query = query.filter(Product.is_sold == True)
+            elif normalized_status == "verification_pending":
+                query = query.filter(Product.is_verified == False)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid status filter. Allowed values: active, inactive, sold, verification_pending"
+                )
+        
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Product.title.ilike(search_term),
+                    Product.description.ilike(search_term)
+                )
+            )
+        
+        total = query.count()
+        offset = (page - 1) * page_size
+        products = query.order_by(Product.created_at.desc()).offset(offset).limit(page_size).all()
+        
+        items = [self._product_to_list_response(product, user) for product in products]
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+        
+        return ProductPaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1
+        )
+    
+    def list_products(
+        self,
+        page: int,
+        page_size: int,
+        category: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        condition: Optional[str] = None
+    ) -> ProductPaginationResponse:
+        """
+        List all products with filtering and pagination.
+        
+        Args:
+            page: Page number
+            page_size: Items per page
+            category: Filter by category
+            search: Search term
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            condition: Filter by condition
+            
+        Returns:
+            ProductPaginationResponse: Paginated list of products
+        """
+        offset = (page - 1) * page_size
+        
+        query = self.db.query(Product).filter(
+            and_(
+                Product.is_active == True,
+                Product.is_sold == False
+            )
+        )
+        
+        if category:
+            query = query.filter(Product.category == category)
+        
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Product.title.ilike(search_term),
+                    Product.description.ilike(search_term),
+                    Product.brand.ilike(search_term)
+                )
+            )
+        
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+        
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+        
+        if condition:
+            query = query.filter(Product.condition == condition)
+        
+        query = query.order_by(Product.created_at.desc())
+        
+        total = query.count()
+        products = query.offset(offset).limit(page_size).all()
+        
+        items = []
+        for product in products:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if seller:
+                items.append(self._product_to_list_response(product, seller))
+        
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+        
+        return ProductPaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1
+        )
+    
+    def get_product(self, product_id: str) -> ProductDetailResponse:
+        """
+        Get detailed product information by ID.
+        
+        Args:
+            product_id: Product UUID string
+            
+        Returns:
+            ProductDetailResponse: Complete product details
+            
+        Raises:
+            HTTPException: If product or seller not found
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        seller = self.db.query(User).filter(User.id == product.owner_id).first()
+        
+        if not seller:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Seller not found"
+            )
+        
+        return self._product_to_detail_response(product, seller)
+    
+    def create_product(
+        self,
+        user_id: str,
+        form_data: Dict[str, Any],
+        image_files: List[UploadFile]
+    ) -> ProductDetailResponse:
+        """
+        Create a new product listing with image uploads.
+        
+        Args:
+            user_id: Current authenticated user ID
+            form_data: Parsed form data dictionary
+            image_files: List of uploaded image files
+            
+        Returns:
+            ProductDetailResponse: Created product details
+            
+        Raises:
+            HTTPException: If validation fails or creation fails
+        """
+        # Extract form fields
+        title = form_data.get("title")
+        description = form_data.get("description")
+        price = form_data.get("price")
+        category = form_data.get("category")
+        condition = form_data.get("condition")
+        dealMethod = form_data.get("dealMethod")
+        meetupDate = form_data.get("meetupDate")
+        meetupLocation = form_data.get("meetupLocation")
+        meetupTime = form_data.get("meetupTime")
+        meetupLocations_raw = form_data.get("meetupLocations")
+        stockQuantity = form_data.get("stockQuantity")
+        
+        gender = form_data.get("gender")
+        productType = form_data.get("productType")
+        subCategory = form_data.get("subCategory")
+        designer = form_data.get("designer")
+        size = form_data.get("size")
+        colors_raw = form_data.get("colors")
+        productStyle = form_data.get("productStyle")
+        
+        measurementChest = form_data.get("measurementChest")
+        measurementSleeveLength = form_data.get("measurementSleeveLength")
+        measurementLength = form_data.get("measurementLength")
+        measurementHem = form_data.get("measurementHem")
+        measurementShoulders = form_data.get("measurementShoulders")
+        
+        purchaseButtonEnabled_raw = form_data.get("purchaseButtonEnabled")
+        deliveryMethod = form_data.get("deliveryMethod")
+        deliveryTime = form_data.get("deliveryTime")
+        deliveryFee_raw = form_data.get("deliveryFee")
+        deliveryFeeType = form_data.get("deliveryFeeType")
+        trackingProvided_raw = form_data.get("trackingProvided")
+        shippingAddress = form_data.get("shippingAddress")
+        
+        # Validate required fields
+        if not all([title, description, price, category, condition, dealMethod]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields: title, description, price, category, condition, dealMethod"
+            )
+        
+        # Normalize deal method for validation
+        normalized_deal_method = dealMethod.strip().lower()
+        if normalized_deal_method not in {"delivery", "meet up", "meetup"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="dealMethod must be either 'Delivery' or 'Meet Up'"
+            )
+        
+        purchase_button_enabled = self._parse_bool(purchaseButtonEnabled_raw, default=True)
+        tracking_provided = self._parse_bool(trackingProvided_raw, default=False)
+        
+        # Parse colors JSON
+        colors: List[str] = []
+        if colors_raw:
+            try:
+                parsed_colors = json.loads(colors_raw)
+                if not isinstance(parsed_colors, list):
+                    raise ValueError("colors must be a JSON array")
+                colors = [str(color) for color in parsed_colors if str(color).strip()]
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid colors format: {exc}"
+                )
+        
+        # colors are required per documentation
+        if not colors:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="colors is required and must contain at least one value"
+            )
+        
+        # Validate required classification fields
+        required_fields = []
+        if not productType:
+            required_fields.append("productType")
+        if not designer:
+            required_fields.append("designer")
+        if not productStyle:
+            required_fields.append("productStyle")
+        if required_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing required fields: {', '.join(required_fields)}"
+            )
+        
+        normalized_category = category.lower()
+        if normalized_category in {"fashion", "lifestyle"} and not gender:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="gender is required for Fashion or Lifestyle categories"
+            )
+        
+        if productType and productType.lower() in {"tops", "bottoms", "footwear", "accessories"} and not size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="size is required for Fashion items (Tops, Bottoms, Footwear, Accessories)"
+            )
+        
+        # Parse stock quantity
+        stock_quantity_value = 1
+        if stockQuantity:
+            try:
+                stock_quantity_value = int(stockQuantity)
+                if stock_quantity_value < 0:
+                    raise ValueError
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="stockQuantity must be a positive integer"
+                )
+        
+        # Parse delivery fee
+        delivery_fee_decimal: Optional[Decimal] = None
+        if deliveryFee_raw not in (None, ""):
+            try:
+                delivery_fee_decimal = Decimal(deliveryFee_raw)
+            except (InvalidOperation, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="deliveryFee must be a numeric value"
+                )
+            if delivery_fee_decimal < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="deliveryFee cannot be negative"
+                )
+        
+        # Parse meetup locations
+        meetup_locations: Optional[List[Dict[str, Any]]] = None
+        if meetupLocations_raw:
+            try:
+                parsed_locations = json.loads(meetupLocations_raw)
+                if not isinstance(parsed_locations, list):
+                    raise ValueError("meetupLocations must be a JSON array")
+                meetup_locations = parsed_locations
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid meetupLocations format: {exc}"
+                )
+        
+        # Validate deal method specific requirements
+        if normalized_deal_method in {"meet up", "meetup"}:
+            if not meetupDate or not meetupTime:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="meetupDate and meetupTime are required when dealMethod is 'Meet Up'"
+                )
+            if purchase_button_enabled:
+                if not meetup_locations or len(meetup_locations) == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="At least one meetup location is required when purchaseButtonEnabled is true for Meet Up"
+                    )
+        elif normalized_deal_method == "delivery":
+            if purchase_button_enabled:
+                missing_delivery_fields = [
+                    field_name for field_name, value in {
+                        "deliveryMethod": deliveryMethod,
+                        "deliveryTime": deliveryTime,
+                        "deliveryFee": deliveryFee_raw,
+                        "deliveryFeeType": deliveryFeeType
+                    }.items() if value in (None, "")
+                ]
+                if missing_delivery_fields:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Missing required delivery fields: {', '.join(missing_delivery_fields)}"
+                    )
+            if deliveryMethod and deliveryMethod.strip().lower() == "partner" and not shippingAddress:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="shippingAddress is required when deliveryMethod is 'partner'"
+                )
+        
+        delivery_method_normalized: Optional[str] = None
+        if deliveryMethod:
+            delivery_method_normalized = deliveryMethod.strip().lower()
+            if delivery_method_normalized not in {"own", "partner"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="deliveryMethod must be either 'own' or 'partner'"
+                )
+        
+        delivery_fee_type_normalized: Optional[str] = None
+        if deliveryFeeType:
+            delivery_fee_type_normalized = deliveryFeeType.strip().lower()
+            if delivery_fee_type_normalized not in {"free", "custom"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="deliveryFeeType must be either 'free' or 'custom'"
+                )
+        
+        delivery_time_normalized: Optional[str] = None
+        if deliveryTime:
+            delivery_time_normalized = deliveryTime.strip().lower()
+            if delivery_time_normalized not in {"same_day", "1_3_days", "2_5_days", "4_7_days"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="deliveryTime must be one of: same_day, 1_3_days, 2_5_days, 4_7_days"
+                )
+        
+        # Verify user exists and fetch UUID instance
+        try:
+            user_uuid = UUID(user_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier"
+            )
+        
+        user = self.db.query(User).filter(User.id == user_uuid).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Convert price to Decimal
+        try:
+            price_decimal = Decimal(price)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid price format"
+            )
+        
+        # Validate minimum number of images (4 required)
+        if len(image_files) < 4:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Minimum 4 product images are required. Received {len(image_files)} valid image(s)."
+            )
+        
+        # Validate and upload images
+        image_urls = []
+        if image_files:
+            if len(image_files) > 10:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Maximum 10 images allowed per product"
+                )
+            
+            s3_service = get_s3_service()
+            for img in image_files:
+                if not img.content_type or not img.content_type.startswith('image/'):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"File {img.filename} must be an image"
+                    )
+                
+                try:
+                    result = s3_service.upload_file(img, "product_images", user_id)
+                    image_urls.append(result["url"])
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to upload image {img.filename}: {str(e)}"
+                    )
+        
+        # Create product
+        verification_code = self._generate_verification_code()
+        verification_expires_at = self._get_verification_expiry()
+        
+        deal_method_value = "Delivery" if normalized_deal_method == "delivery" else "Meet Up"
+        stock_status_value = "In Stock" if stock_quantity_value > 0 else "Out of Stock"
+        
+        product = Product(
+            owner_id=user_uuid,
+            title=title,
+            description=description,
+            price=price_decimal,
+            category=category,
+            condition=condition,
+            deal_method=deal_method_value,
+            meetup_date=meetupDate,
+            meetup_location=meetupLocation,
+            meetup_time=meetupTime,
+            images=image_urls,
+            stock_quantity=stock_quantity_value,
+            stock_status=stock_status_value,
+            is_active=False,
+            is_verified=False,
+            verification_code=verification_code,
+            verification_expires_at=verification_expires_at,
+            verification_attempts=0,
+            gender=gender,
+            product_type=productType,
+            sub_category=subCategory,
+            designer=designer,
+            size=size,
+            colors=colors,
+            product_style=productStyle,
+            measurement_chest=measurementChest,
+            measurement_sleeve_length=measurementSleeveLength,
+            measurement_length=measurementLength,
+            measurement_hem=measurementHem,
+            measurement_shoulders=measurementShoulders,
+            purchase_button_enabled=purchase_button_enabled,
+            delivery_method=delivery_method_normalized,
+            delivery_time=delivery_time_normalized,
+            delivery_fee=delivery_fee_decimal,
+            delivery_fee_type=delivery_fee_type_normalized,
+            tracking_provided=tracking_provided,
+            shipping_address=shippingAddress.strip() if shippingAddress else None,
+            meetup_locations=meetup_locations
+        )
+        
+        self.db.add(product)
+        self.db.flush()
+        
+        email_sent = email_service.send_product_verification_email(
+            email=user.email,
+            product_title=title,
+            verification_code=verification_code
+        )
+        
+        if not email_sent:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send verification email. Please try again later."
+            )
+        
+        self.db.commit()
+        self.db.refresh(product)
+        
+        return self._product_to_detail_response(product, user)
+    
+    def send_verification_code(self, product_id: str, user_id: str) -> Dict[str, str]:
+        """
+        Send or resend the verification code for a product listing.
+        
+        Args:
+            product_id: Product UUID string
+            user_id: Current authenticated user ID
+            
+        Returns:
+            Dict[str, str]: Success message
+            
+        Raises:
+            HTTPException: If product not found, unauthorized, or already verified
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        if not product:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+        
+        if str(product.owner_id) != user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
+        
+        if product.is_verified:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product is already verified")
+        
+        user = self.db.query(User).filter(User.id == product.owner_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
+        
+        product.verification_code = self._generate_verification_code()
+        product.verification_expires_at = self._get_verification_expiry()
+        product.verification_attempts = 0
+        product.is_active = False
+        
+        self.db.flush()
+        
+        email_sent = email_service.send_product_verification_email(
+            email=user.email,
+            product_title=product.title,
+            verification_code=product.verification_code
+        )
+        
+        if not email_sent:
+            self.db.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send verification email")
+        
+        self.db.commit()
+        
+        return {"message": "Verification code sent to your registered email"}
+    
+    def verify_product(self, product_id: str, verification_data: ProductVerificationRequest, user_id: str) -> ProductDetailResponse:
+        """
+        Verify a product listing using the received verification code.
+        
+        Args:
+            product_id: Product UUID string
+            verification_data: Verification request with code
+            user_id: Current authenticated user ID
+            
+        Returns:
+            ProductDetailResponse: Verified product details
+            
+        Raises:
+            HTTPException: If verification fails
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        if not product:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+        
+        if str(product.owner_id) != user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
+        
+        if product.is_verified:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if not seller:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
+            return self._product_to_detail_response(product, seller)
+        
+        if not product.verification_code:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found. Request a new code.")
+        
+        if product.verification_expires_at and datetime.utcnow() > product.verification_expires_at:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Request a new code.")
+        
+        if product.verification_attempts >= settings.PRODUCT_VERIFICATION_MAX_ATTEMPTS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum verification attempts reached. Request a new code.")
+        
+        if product.verification_code != verification_data.verification_code:
+            product.verification_attempts += 1
+            self.db.commit()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+        
+        product.is_verified = True
+        product.is_active = True
+        product.verification_code = None
+        product.verification_expires_at = None
+        product.verification_attempts = 0
+        
+        self.db.commit()
+        self.db.refresh(product)
+        
+        seller = self.db.query(User).filter(User.id == product.owner_id).first()
+        if not seller:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
+        
+        return self._product_to_detail_response(product, seller)
+    
+    def update_product(self, product_id: str, product_data: ProductUpdate, user_id: str) -> ProductDetailResponse:
+        """
+        Update a product listing.
+        
+        Args:
+            product_id: Product UUID string
+            product_data: Product update data
+            user_id: Current authenticated user ID
+            
+        Returns:
+            ProductDetailResponse: Updated product details
+            
+        Raises:
+            HTTPException: If product not found or user not authorized
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        if str(product.owner_id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to update this product"
+            )
+        
+        update_data = product_data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(product, field, value)
+        
+        self.db.commit()
+        self.db.refresh(product)
+        
+        seller = self.db.query(User).filter(User.id == product.owner_id).first()
+        
+        return self._product_to_detail_response(product, seller)
+    
+    def add_product_images(self, product_id: str, images: List[UploadFile], user_id: str) -> ProductDetailResponse:
+        """
+        Add or replace images for an existing product.
+        
+        Args:
+            product_id: Product UUID string
+            images: List of image files to upload
+            user_id: Current authenticated user ID
+            
+        Returns:
+            ProductDetailResponse: Updated product details with new images
+            
+        Raises:
+            HTTPException: If product not found, user not authorized, or upload fails
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        if str(product.owner_id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to update this product"
+            )
+        
+        existing_images = product.images or []
+        
+        if len(existing_images) + len(images) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum 10 images allowed per product. You have {len(existing_images)} existing images."
+            )
+        
+        s3_service = get_s3_service()
+        new_image_urls = []
+        
+        for img in images:
+            if not img.content_type or not img.content_type.startswith('image/'):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"File {img.filename} must be an image"
+                )
+            
+            try:
+                result = s3_service.upload_file(img, "product_images", user_id)
+                new_image_urls.append(result["url"])
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload image {img.filename}: {str(e)}"
+                )
+        
+        product.images = existing_images + new_image_urls
+        self.db.commit()
+        self.db.refresh(product)
+        
+        seller = self.db.query(User).filter(User.id == product.owner_id).first()
+        
+        return self._product_to_detail_response(product, seller)
+    
+    def delete_product(self, product_id: str, user_id: str) -> None:
+        """
+        Delete a product listing (soft delete).
+        
+        Args:
+            product_id: Product UUID string
+            user_id: Current authenticated user ID
+            
+        Raises:
+            HTTPException: If product not found or user not authorized
+        """
+        try:
+            product_uuid = UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format"
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        if str(product.owner_id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to delete this product"
+            )
+        
+        product.is_active = False
+        self.db.commit()
+
