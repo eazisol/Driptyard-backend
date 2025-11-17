@@ -15,7 +15,8 @@ import json
 import math
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, func, case
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import settings
 from app.models.product import Product
@@ -67,7 +68,8 @@ class ProductService:
             username=user.username,
             rating=4.8,  # TODO: Calculate from reviews
             total_sales=156,  # TODO: Get from orders
-            avatar_url=user.avatar_url
+            avatar_url=user.avatar_url,
+            is_verified=user.is_verified
         )
     
     def _product_to_list_response(self, product: Product, seller: User) -> ProductListResponse:
@@ -138,26 +140,253 @@ class ProductService:
             updated_at=product.updated_at
         )
     
-    def list_featured_products(self, page: int, page_size: int) -> ProductPaginationResponse:
+    def _apply_filters_and_sorting(
+        self,
+        query,
+        category: Optional[str] = None,
+        product_type: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        gender: Optional[str] = None,
+        location: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        sort: Optional[str] = "newest",
+        brands: Optional[List[str]] = None,
+        sizes: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        conditions: Optional[List[str]] = None,
+        delivery: Optional[List[str]] = None
+    ):
         """
-        Get featured products listing.
+        Apply filters and sorting to a product query.
+        
+        Args:
+            query: Base SQLAlchemy query
+            category: Filter by category
+            product_type: Filter by product type
+            sub_category: Filter by sub-category
+            gender: Filter by gender
+            location: Filter by location
+            search: Search term
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            sort: Sort order
+            brands: Filter by brands/designers (array)
+            sizes: Filter by sizes (array)
+            colors: Filter by colors (array)
+            conditions: Filter by conditions (array)
+            delivery: Filter by delivery method (array)
+            
+        Returns:
+            Modified query with filters and sorting applied
+        """
+        # Basic filters
+        if category:
+            # Use case-insensitive partial matching to handle category variations
+            # e.g., "Fashion" should match "Fashion & Accessories"
+            query = query.filter(Product.category.ilike(f"%{category}%"))
+        
+        if product_type:
+            query = query.filter(func.lower(Product.product_type) == func.lower(product_type))
+        
+        if sub_category:
+            query = query.filter(func.lower(Product.sub_category) == func.lower(sub_category))
+        
+        if gender:
+            query = query.filter(func.lower(Product.gender) == func.lower(gender))
+        
+        if location:
+            # Location can match meetup_location or location field
+            query = query.filter(
+                or_(
+                    Product.location.ilike(f"%{location}%"),
+                    Product.meetup_location.ilike(f"%{location}%")
+                )
+            )
+        
+        # Search filter
+        if search:
+            search_term = f"%{search}%"
+            search_conditions = [
+                Product.title.ilike(search_term),
+                Product.description.ilike(search_term)
+            ]
+            # Add optional fields if they exist
+            if hasattr(Product, 'designer'):
+                search_conditions.append(Product.designer.ilike(search_term))
+            if hasattr(Product, 'brand'):
+                search_conditions.append(Product.brand.ilike(search_term))
+            query = query.filter(or_(*search_conditions))
+        
+        # Price filters
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+        
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+        
+        # Array filters - brands (mapped to designer field, case-insensitive exact match)
+        if brands:
+            brand_conditions = []
+            for brand in brands:
+                brand_conditions.append(
+                    func.lower(Product.designer) == func.lower(brand)
+                )
+            if brand_conditions:
+                query = query.filter(or_(*brand_conditions))
+        
+        # Array filters - sizes (case-insensitive exact match)
+        if sizes:
+            size_conditions = []
+            for size in sizes:
+                size_conditions.append(
+                    func.lower(Product.size) == func.lower(size)
+                )
+            if size_conditions:
+                query = query.filter(or_(*size_conditions))
+        
+        # Array filters - colors (stored as JSON array)
+        if colors:
+            # PostgreSQL JSON array contains check
+            color_conditions = []
+            for color in colors:
+                # Using jsonb_path_exists to check if any array element equals the color
+                color_conditions.append(
+                    func.jsonb_path_exists(
+                        func.cast(Product.colors, JSONB),
+                        f'$[*] ? (@ == "{color}")'
+                    )
+                )
+            if color_conditions:
+                query = query.filter(or_(*color_conditions))
+        
+        # Array filters - conditions (case-insensitive exact match)
+        if conditions:
+            # Use case-insensitive exact matching for conditions
+            condition_conditions = []
+            for condition_value in conditions:
+                # Use func.lower for case-insensitive exact match
+                condition_conditions.append(
+                    func.lower(Product.condition) == func.lower(condition_value)
+                )
+            if condition_conditions:
+                query = query.filter(or_(*condition_conditions))
+        
+        # Array filters - delivery (mapped to deal_method and delivery_method)
+        if delivery:
+            delivery_conditions = []
+            for delivery_method in delivery:
+                if delivery_method.lower() in ["buyer_protection", "delivery"]:
+                    delivery_conditions.append(Product.deal_method.ilike("%delivery%"))
+                elif delivery_method.lower() == "meetup":
+                    delivery_conditions.append(
+                        or_(
+                            Product.deal_method.ilike("%meet%"),
+                            Product.deal_method.ilike("%meetup%")
+                        )
+                    )
+            if delivery_conditions:
+                query = query.filter(or_(*delivery_conditions))
+        
+        # Sorting logic
+        if sort == "price_low_high":
+            query = query.order_by(Product.price.asc(), Product.created_at.desc())
+        elif sort == "price_high_low":
+            query = query.order_by(Product.price.desc(), Product.created_at.desc())
+        elif sort == "verified":
+            # Recently verified products first
+            query = query.order_by(
+                Product.is_verified.desc(),
+                Product.created_at.desc()
+            )
+        elif sort == "popular":
+            # Most popular (by rating and review count)
+            query = query.order_by(
+                Product.rating.desc(),
+                Product.review_count.desc(),
+                Product.created_at.desc()
+            )
+        elif sort == "grid_manager":
+            # Grid manager sort (similar to newest but may have custom logic)
+            query = query.order_by(Product.created_at.desc())
+        else:  # Default: newest
+            query = query.order_by(Product.created_at.desc())
+        
+        return query
+    
+    def list_featured_products(
+        self,
+        page: int,
+        page_size: int,
+        category: Optional[str] = None,
+        product_type: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        gender: Optional[str] = None,
+        location: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        sort: Optional[str] = "newest",
+        brands: Optional[List[str]] = None,
+        sizes: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        conditions: Optional[List[str]] = None,
+        delivery: Optional[List[str]] = None
+    ) -> ProductPaginationResponse:
+        """
+        Get featured products listing with filtering and sorting.
         
         Args:
             page: Page number (starts from 1)
             page_size: Number of items per page
+            category: Filter by category
+            product_type: Filter by product type
+            sub_category: Filter by sub-category
+            gender: Filter by gender
+            location: Filter by location
+            search: Search term
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+            brands: Filter by brands/designers (array)
+            sizes: Filter by sizes (array)
+            colors: Filter by colors (array)
+            conditions: Filter by conditions (array)
+            delivery: Filter by delivery method (array)
             
         Returns:
             ProductPaginationResponse: Paginated list of featured products
         """
         offset = (page - 1) * page_size
         
+        # Base query for featured products
         query = self.db.query(Product).filter(
             and_(
                 Product.is_featured == True,
                 Product.is_active == True,
                 Product.is_sold == False
             )
-        ).order_by(Product.created_at.desc())
+        )
+        
+        # Apply filters and sorting
+        query = self._apply_filters_and_sorting(
+            query,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery
+        )
         
         total = query.count()
         products = query.offset(offset).limit(page_size).all()
@@ -180,26 +409,78 @@ class ProductService:
             has_prev=page > 1
         )
     
-    def list_recommended_products(self, page: int, page_size: int) -> ProductPaginationResponse:
+    def list_recommended_products(
+        self,
+        page: int,
+        page_size: int,
+        category: Optional[str] = None,
+        product_type: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        gender: Optional[str] = None,
+        location: Optional[str] = None,
+        search: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        sort: Optional[str] = "popular",
+        brands: Optional[List[str]] = None,
+        sizes: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        conditions: Optional[List[str]] = None,
+        delivery: Optional[List[str]] = None
+    ) -> ProductPaginationResponse:
         """
-        Get recommended products for user.
+        Get recommended products for user with filtering and sorting.
         
         Args:
             page: Page number (starts from 1)
             page_size: Number of items per page
+            category: Filter by category
+            product_type: Filter by product type
+            sub_category: Filter by sub-category
+            gender: Filter by gender
+            location: Filter by location
+            search: Search term
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+            brands: Filter by brands/designers (array)
+            sizes: Filter by sizes (array)
+            colors: Filter by colors (array)
+            conditions: Filter by conditions (array)
+            delivery: Filter by delivery method (array)
             
         Returns:
             ProductPaginationResponse: Paginated list of recommended products
         """
         offset = (page - 1) * page_size
         
+        # Base query for recommended products (excludes featured)
         query = self.db.query(Product).filter(
             and_(
                 Product.is_active == True,
                 Product.is_sold == False,
                 Product.is_featured == False
             )
-        ).order_by(Product.rating.desc(), Product.created_at.desc())
+        )
+        
+        # Apply filters and sorting
+        query = self._apply_filters_and_sorting(
+            query,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery
+        )
         
         total = query.count()
         products = query.offset(offset).limit(page_size).all()
@@ -310,10 +591,19 @@ class ProductService:
         page: int,
         page_size: int,
         category: Optional[str] = None,
+        product_type: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        gender: Optional[str] = None,
+        location: Optional[str] = None,
         search: Optional[str] = None,
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
-        condition: Optional[str] = None
+        sort: Optional[str] = "newest",
+        brands: Optional[List[str]] = None,
+        sizes: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        conditions: Optional[List[str]] = None,
+        delivery: Optional[List[str]] = None
     ) -> ProductPaginationResponse:
         """
         List all products with filtering and pagination.
@@ -322,16 +612,26 @@ class ProductService:
             page: Page number
             page_size: Items per page
             category: Filter by category
+            product_type: Filter by product type
+            sub_category: Filter by sub-category
+            gender: Filter by gender
+            location: Filter by location
             search: Search term
             min_price: Minimum price filter
             max_price: Maximum price filter
-            condition: Filter by condition
+            sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+            brands: Filter by brands/designers (array)
+            sizes: Filter by sizes (array)
+            colors: Filter by colors (array)
+            conditions: Filter by conditions (array)
+            delivery: Filter by delivery method (array)
             
         Returns:
             ProductPaginationResponse: Paginated list of products
         """
         offset = (page - 1) * page_size
         
+        # Base query for all products
         query = self.db.query(Product).filter(
             and_(
                 Product.is_active == True,
@@ -339,29 +639,24 @@ class ProductService:
             )
         )
         
-        if category:
-            query = query.filter(Product.category == category)
-        
-        if search:
-            search_term = f"%{search}%"
-            query = query.filter(
-                or_(
-                    Product.title.ilike(search_term),
-                    Product.description.ilike(search_term),
-                    Product.brand.ilike(search_term)
-                )
-            )
-        
-        if min_price is not None:
-            query = query.filter(Product.price >= min_price)
-        
-        if max_price is not None:
-            query = query.filter(Product.price <= max_price)
-        
-        if condition:
-            query = query.filter(Product.condition == condition)
-        
-        query = query.order_by(Product.created_at.desc())
+        # Apply filters and sorting
+        query = self._apply_filters_and_sorting(
+            query,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery
+        )
         
         total = query.count()
         products = query.offset(offset).limit(page_size).all()

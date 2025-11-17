@@ -21,6 +21,7 @@ class SellerInfo(BaseModel):
     rating: float = Field(default=0.0, description="Seller rating")
     total_sales: int = Field(default=0, description="Total number of sales")
     avatar_url: Optional[str] = Field(None, description="Seller avatar URL")
+    is_verified: bool = Field(default=False, description="Whether seller is verified")
 
 
 class ProductCreate(BaseCreateSchema):
