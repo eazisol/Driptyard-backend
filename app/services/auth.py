@@ -47,7 +47,7 @@ class AuthService:
         try:
             # Check if user already exists
             existing_user = self.db.query(User).filter(
-                (User.email == user_data.email) | (User.username == user_data.username)
+                (User.email == user_data.email) | (User.username == user_data.username) | (User.phone == user_data.phone)
             ).first()
             
             if existing_user:
@@ -55,6 +55,11 @@ class AuthService:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Email already registered"
+                    )
+                elif existing_user.phone == user_data.phone:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Phone number already registered"
                     )
                 else:
                     raise HTTPException(
