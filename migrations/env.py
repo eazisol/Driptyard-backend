@@ -9,6 +9,12 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.models import Base
+# Import all models so Alembic can detect them
+from app.models.user import User, EmailVerification, RegistrationData
+from app.models.category import MainCategory, CategoryType, SubCategory, Brand, Gender
+from app.models.product import Product
+from app.models.order import Order
+
 target_metadata = Base.metadata
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

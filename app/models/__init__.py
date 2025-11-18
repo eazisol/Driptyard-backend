@@ -6,6 +6,13 @@ This package contains all SQLAlchemy database models organized by domain.
 
 from app.models.base import Base
 from app.models.user import User, EmailVerification, RegistrationData
+from app.models.category import (
+    MainCategory,
+    CategoryType,
+    SubCategory,
+    Brand,
+    Gender
+)
 
 # Placeholder imports for future models
 # from app.models.product import Product
@@ -16,6 +23,11 @@ __all__ = [
     "User", 
     "EmailVerification", 
     "RegistrationData",
+    "MainCategory",
+    "CategoryType",
+    "SubCategory",
+    "Brand",
+    "Gender",
     # "Product",
     # "Order",
 ]
