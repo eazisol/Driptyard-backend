@@ -268,7 +268,7 @@ async def get_product(
     seller information, ratings, and policies.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         db: Database session
         
     Returns:
@@ -391,7 +391,7 @@ async def update_product(
     Use POST /{product_id}/images to add/update product images.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         product_data: Product update data
         current_user_id: Current authenticated user ID
         db: Database session
@@ -419,7 +419,7 @@ async def add_product_images(
     Only the product owner can update product images.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         images: List of image files to upload (max 10 total)
         current_user_id: Current authenticated user ID
         db: Database session
@@ -446,7 +446,7 @@ async def delete_product(
     Only the product owner can delete their products.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         current_user_id: Current authenticated user ID
         db: Database session
         

@@ -78,7 +78,7 @@ async def get_main_category_with_types(
     Get a main category with its category types.
     
     Args:
-        main_category_id: UUID of the main category
+        main_category_id: ID of the main category (integer)
         
     Returns:
         Main category with its category types
@@ -91,7 +91,7 @@ async def get_main_category_with_types(
         )
     
     category_types = db.query(CategoryType).filter(
-        CategoryType.parent_id == main_category.id
+        CategoryType.main_category_id == main_category.id
     ).order_by(CategoryType.name).all()
     
     return MainCategoryWithTypesResponse(
@@ -117,7 +117,7 @@ async def get_category_types(
     query = db.query(CategoryType)
     
     if main_category_id:
-        query = query.filter(CategoryType.parent_id == main_category_id)
+        query = query.filter(CategoryType.main_category_id == main_category_id)
     
     category_types = query.order_by(CategoryType.name).all()
     return CategoryTypesListResponse(
@@ -134,7 +134,7 @@ async def get_category_type_with_sub_categories(
     Get a category type with its sub categories.
     
     Args:
-        category_type_id: UUID of the category type
+        category_type_id: int - ID of the category type
         
     Returns:
         Category type with its sub categories
@@ -195,7 +195,7 @@ async def get_sub_category_with_details(
     Get a sub category with its details (category type and gender).
     
     Args:
-        sub_category_id: UUID of the sub category
+        sub_category_id: int - ID of the sub category
         
     Returns:
         Sub category with its related information
@@ -257,7 +257,7 @@ async def get_brand(
     Get a specific brand by ID.
     
     Args:
-        brand_id: UUID of the brand
+        brand_id: int - ID of the brand
         
     Returns:
         Brand information
@@ -286,7 +286,7 @@ async def get_complete_category(
     - sub_categories array with full sub category objects
     
     Args:
-        main_category_id: UUID of the main category
+        main_category_id: ID of the main category (integer)
         
     Returns:
         Complete category hierarchy with all nested data
@@ -315,7 +315,7 @@ def _build_complete_category(main_category: MainCategory, db: Session) -> Comple
     """
     # Get all category types for this main category
     category_types = db.query(CategoryType).filter(
-        CategoryType.parent_id == main_category.id
+        CategoryType.main_category_id == main_category.id
     ).order_by(CategoryType.name).all()
     
     # Build the response structure

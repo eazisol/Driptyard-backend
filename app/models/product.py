@@ -5,13 +5,13 @@ This module contains Product models for the e-commerce platform.
 """
 
 from sqlalchemy import Column, String, Text, Numeric, Boolean, Integer, Float, ForeignKey, DateTime
-from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import relationship
 
-from app.models.base import BaseModel
+from app.models.base import UserProductBaseModel
 
 
-class Product(BaseModel):
+class Product(UserProductBaseModel):
     """Product model for storing product information."""
     
     __tablename__ = "products"
@@ -20,7 +20,7 @@ class Product(BaseModel):
     title = Column(String(255), nullable=False, index=True)  # Changed from name to title
     description = Column(Text, nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
-    category = Column(String(100), nullable=True, index=True)
+    category_id = Column(Integer, ForeignKey("main_categories.id"), nullable=True, index=True)
     condition = Column(String(50), nullable=True)  # Like New, Excellent, Brand New, Good, Fair
     
     # Deal method and meetup details
@@ -49,17 +49,17 @@ class Product(BaseModel):
     delivery_days = Column(String(50), nullable=True)  # e.g., "2-3 business days"
     
     # Owner information
-    owner_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
     # Product details
     brand = Column(String(100), nullable=True)
     model = Column(String(100), nullable=True)
     year = Column(Integer, nullable=True)
     sku = Column(String(100), nullable=True, unique=True)
-    gender = Column(String(20), nullable=True)
-    product_type = Column(String(100), nullable=True)
-    sub_category = Column(String(100), nullable=True)
-    designer = Column(String(100), nullable=True)
+    gender_id = Column(Integer, ForeignKey("genders.id"), nullable=True, index=True)
+    product_type_id = Column(Integer, ForeignKey("category_types.id"), nullable=True, index=True)
+    sub_category_id = Column(Integer, ForeignKey("sub_categories.id"), nullable=True, index=True)
+    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True, index=True)
     size = Column(String(50), nullable=True)
     colors = Column(JSON, nullable=True)
     product_style = Column(String(50), nullable=True)
@@ -97,7 +97,14 @@ class Product(BaseModel):
     # Search and filtering
     condition_badge = Column(String(50), nullable=True)  # "Like New", "Excellent", "Brand New"
     
+    # Relationships
+    category = relationship("MainCategory", foreign_keys=[category_id])
+    gender = relationship("Gender", foreign_keys=[gender_id])
+    product_type = relationship("CategoryType", foreign_keys=[product_type_id])
+    sub_category = relationship("SubCategory", foreign_keys=[sub_category_id])
+    brand = relationship("Brand", foreign_keys=[brand_id])
+    owner = relationship("User", foreign_keys=[owner_id])
+    
     # TODO: Add relationships when other models are ready
-    # owner = relationship("User", back_populates="products")
     # orders = relationship("Order", back_populates="product")
     # reviews = relationship("Review", back_populates="product")

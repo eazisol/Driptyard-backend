@@ -5,31 +5,37 @@ This module contains all category and brand-related response schemas.
 """
 
 from typing import Optional, List
-from uuid import UUID
+# Removed UUID import - using int for IDs now
 from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import BaseResponseSchema
+
+class CategoryBaseResponseSchema(BaseModel):
+    """Base response schema for category-related models with integer IDs."""
+    
+    id: int = Field(..., description="Unique identifier")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
 
 
-class GenderResponse(BaseResponseSchema):
+class GenderResponse(CategoryBaseResponseSchema):
     """Schema for gender response."""
     
     name: str = Field(..., description="Gender name")
 
 
-class MainCategoryResponse(BaseResponseSchema):
+class MainCategoryResponse(CategoryBaseResponseSchema):
     """Schema for main category response."""
     
     name: str = Field(..., description="Main category name")
 
 
-class CategoryTypeResponse(BaseResponseSchema):
+class CategoryTypeResponse(CategoryBaseResponseSchema):
     """Schema for category type response."""
     
     name: str = Field(..., description="Category type name")
-    parent_id: UUID = Field(..., description="Parent main category ID")
+    main_category_id: int = Field(..., description="Parent main category ID")
 
 
 class CategoryTypeWithParentResponse(CategoryTypeResponse):
@@ -38,12 +44,12 @@ class CategoryTypeWithParentResponse(CategoryTypeResponse):
     parent: Optional[MainCategoryResponse] = Field(None, description="Parent main category")
 
 
-class SubCategoryResponse(BaseResponseSchema):
+class SubCategoryResponse(CategoryBaseResponseSchema):
     """Schema for sub category response."""
     
     name: str = Field(..., description="Sub category name")
-    type_id: UUID = Field(..., description="Parent category type ID")
-    gender_id: Optional[UUID] = Field(None, description="Gender ID (if applicable)")
+    type_id: int = Field(..., description="Parent category type ID")
+    gender_id: Optional[int] = Field(None, description="Gender ID (if applicable)")
 
 
 class SubCategoryWithDetailsResponse(SubCategoryResponse):
@@ -53,7 +59,7 @@ class SubCategoryWithDetailsResponse(SubCategoryResponse):
     gender: Optional[GenderResponse] = Field(None, description="Gender information")
 
 
-class BrandResponse(BaseResponseSchema):
+class BrandResponse(CategoryBaseResponseSchema):
     """Schema for brand response."""
     
     name: str = Field(..., description="Brand name")
@@ -102,11 +108,11 @@ class GendersListResponse(BaseModel):
     genders: List[GenderResponse] = Field(..., description="List of genders")
 
 
-class SubCategoryFullResponse(BaseResponseSchema):
+class SubCategoryFullResponse(CategoryBaseResponseSchema):
     """Schema for full sub category response with simplified details."""
     
     sub_category_name: str = Field(..., description="Sub category name")
-    gender_id: Optional[UUID] = Field(None, description="Gender ID (if applicable)")
+    gender_id: Optional[int] = Field(None, description="Gender ID (if applicable)")
     gender_name: Optional[str] = Field(None, description="Gender name (if applicable)")
     
     @classmethod
@@ -125,7 +131,7 @@ class SubCategoryFullResponse(BaseResponseSchema):
 class CategoryTypeWithSubCategoriesFullResponse(BaseModel):
     """Schema for category type with sub categories in the full response format."""
     
-    type_id: UUID = Field(..., description="Category type ID")
+    type_id: int = Field(..., description="Category type ID")
     type_name: str = Field(..., description="Category type name")
     sub_categories: List[SubCategoryFullResponse] = Field(default_factory=list, description="List of sub categories with full details")
 
@@ -133,7 +139,7 @@ class CategoryTypeWithSubCategoriesFullResponse(BaseModel):
 class CompleteCategoryResponse(BaseModel):
     """Schema for complete category hierarchy response."""
     
-    category_id: UUID = Field(..., description="Main category ID")
+    category_id: int = Field(..., description="Main category ID")
     category_name: str = Field(..., description="Main category name")
     types: List[CategoryTypeWithSubCategoriesFullResponse] = Field(default_factory=list, description="List of category types with their sub categories")
 

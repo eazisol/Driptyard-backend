@@ -6,7 +6,7 @@ validation, verification, and data transformations.
 """
 
 from typing import Optional, List, Any, Dict, Tuple
-from uuid import UUID
+from typing import Union
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta
 import random
@@ -21,6 +21,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.database import settings
 from app.models.product import Product
 from app.models.user import User
+from app.models.category import (
+    MainCategory,
+    CategoryType,
+    SubCategory,
+    Brand,
+    Gender
+)
 from app.schemas.product import (
     ProductListResponse,
     ProductDetailResponse,
@@ -85,7 +92,7 @@ class ProductService:
             review_count=product.review_count,
             stock_status=product.stock_status,
             deal_method=product.deal_method,
-            product_type=product.product_type,
+            product_type=str(product.product_type_id) if product.product_type_id else None,
             product_style=product.product_style,
             colors=product.colors or [],
             purchase_button_enabled=product.purchase_button_enabled,
@@ -95,12 +102,39 @@ class ProductService:
     
     def _product_to_detail_response(self, product: Product, seller: User) -> ProductDetailResponse:
         """Convert Product model to ProductDetailResponse."""
+        # Fetch related category names
+        category_name = None
+        if product.category_id:
+            category = self.db.query(MainCategory).filter(MainCategory.id == product.category_id).first()
+            category_name = category.name if category else None
+        
+        gender_name = None
+        if product.gender_id:
+            gender = self.db.query(Gender).filter(Gender.id == product.gender_id).first()
+            gender_name = gender.name if gender else None
+        
+        product_type_name = None
+        if product.product_type_id:
+            product_type = self.db.query(CategoryType).filter(CategoryType.id == product.product_type_id).first()
+            product_type_name = product_type.name if product_type else None
+        
+        sub_category_name = None
+        if product.sub_category_id:
+            sub_category = self.db.query(SubCategory).filter(SubCategory.id == product.sub_category_id).first()
+            sub_category_name = sub_category.name if sub_category else None
+        
+        brand_name = None
+        if product.brand_id:
+            brand = self.db.query(Brand).filter(Brand.id == product.brand_id).first()
+            brand_name = brand.name if brand else None
+        
         return ProductDetailResponse(
             id=str(product.id),
             title=product.title,
             description=product.description,
             price=product.price,
-            category=product.category,
+            category=str(product.category_id) if product.category_id else None,
+            category_name=category_name,
             condition=product.condition,
             deal_method=product.deal_method,
             meetup_date=product.meetup_date,
@@ -115,10 +149,14 @@ class ProductService:
             is_sold=product.is_sold,
             is_featured=product.is_featured,
             is_verified=product.is_verified,
-            gender=product.gender,
-            product_type=product.product_type,
-            sub_category=product.sub_category,
-            designer=product.designer,
+            gender=str(product.gender_id) if product.gender_id else None,
+            gender_name=gender_name,
+            product_type=str(product.product_type_id) if product.product_type_id else None,
+            product_type_name=product_type_name,
+            sub_category=str(product.sub_category_id) if product.sub_category_id else None,
+            sub_category_name=sub_category_name,
+            brand=str(product.brand_id) if product.brand_id else None,
+            brand_name=brand_name,
             size=product.size,
             colors=product.colors or [],
             product_style=product.product_style,
@@ -172,7 +210,7 @@ class ProductService:
             min_price: Minimum price filter
             max_price: Maximum price filter
             sort: Sort order
-            brands: Filter by brands/designers (array)
+            brands: Filter by brands/brands (array)
             sizes: Filter by sizes (array)
             colors: Filter by colors (array)
             conditions: Filter by conditions (array)
@@ -181,20 +219,46 @@ class ProductService:
         Returns:
             Modified query with filters and sorting applied
         """
-        # Basic filters
+        # Basic filters - now using integer IDs
         if category:
-            # Use case-insensitive partial matching to handle category variations
-            # e.g., "Fashion" should match "Fashion & Accessories"
-            query = query.filter(Product.category.ilike(f"%{category}%"))
+            try:
+                category_id = int(category)
+                query = query.filter(Product.category_id == category_id)
+            except (ValueError, TypeError):
+                # If not a valid integer, try to find by name (backward compatibility)
+                main_category = self.db.query(MainCategory).filter(MainCategory.name.ilike(f"%{category}%")).first()
+                if main_category:
+                    query = query.filter(Product.category_id == main_category.id)
         
         if product_type:
-            query = query.filter(func.lower(Product.product_type) == func.lower(product_type))
+            try:
+                product_type_id = int(product_type)
+                query = query.filter(Product.product_type_id == product_type_id)
+            except (ValueError, TypeError):
+                # If not a valid integer, try to find by name (backward compatibility)
+                category_type = self.db.query(CategoryType).filter(func.lower(CategoryType.name) == func.lower(product_type)).first()
+                if category_type:
+                    query = query.filter(Product.product_type_id == category_type.id)
         
         if sub_category:
-            query = query.filter(func.lower(Product.sub_category) == func.lower(sub_category))
+            try:
+                sub_category_id = int(sub_category)
+                query = query.filter(Product.sub_category_id == sub_category_id)
+            except (ValueError, TypeError):
+                # If not a valid integer, try to find by name (backward compatibility)
+                sub_cat = self.db.query(SubCategory).filter(func.lower(SubCategory.name) == func.lower(sub_category)).first()
+                if sub_cat:
+                    query = query.filter(Product.sub_category_id == sub_cat.id)
         
         if gender:
-            query = query.filter(func.lower(Product.gender) == func.lower(gender))
+            try:
+                gender_id = int(gender)
+                query = query.filter(Product.gender_id == gender_id)
+            except (ValueError, TypeError):
+                # If not a valid integer, try to find by name (backward compatibility)
+                gender_obj = self.db.query(Gender).filter(func.lower(Gender.name) == func.lower(gender)).first()
+                if gender_obj:
+                    query = query.filter(Product.gender_id == gender_obj.id)
         
         if location:
             # Location can match meetup_location or location field
@@ -212,9 +276,9 @@ class ProductService:
                 Product.title.ilike(search_term),
                 Product.description.ilike(search_term)
             ]
-            # Add optional fields if they exist
-            if hasattr(Product, 'designer'):
-                search_conditions.append(Product.designer.ilike(search_term))
+            # Search in related brand/brand names via join
+            # Note: brand search removed as it's now a UUID relationship
+            # For full text search on brand names, would need a join which is complex
             if hasattr(Product, 'brand'):
                 search_conditions.append(Product.brand.ilike(search_term))
             query = query.filter(or_(*search_conditions))
@@ -226,13 +290,18 @@ class ProductService:
         if max_price is not None:
             query = query.filter(Product.price <= max_price)
         
-        # Array filters - brands (mapped to designer field, case-insensitive exact match)
+        # Array filters - brands (mapped to brand_id field, integer ID or name lookup)
         if brands:
             brand_conditions = []
             for brand in brands:
-                brand_conditions.append(
-                    func.lower(Product.designer) == func.lower(brand)
-                )
+                try:
+                    brand_id = int(brand)
+                    brand_conditions.append(Product.brand_id == brand_id)
+                except (ValueError, TypeError):
+                    # If not a valid integer, try to find by name (backward compatibility)
+                    brand_obj = self.db.query(Brand).filter(func.lower(Brand.name) == func.lower(brand)).first()
+                    if brand_obj:
+                        brand_conditions.append(Product.brand_id == brand_obj.id)
             if brand_conditions:
                 query = query.filter(or_(*brand_conditions))
         
@@ -349,7 +418,7 @@ class ProductService:
             min_price: Minimum price filter
             max_price: Maximum price filter
             sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
-            brands: Filter by brands/designers (array)
+            brands: Filter by brands/brands (array)
             sizes: Filter by sizes (array)
             colors: Filter by colors (array)
             conditions: Filter by conditions (array)
@@ -443,7 +512,7 @@ class ProductService:
             min_price: Minimum price filter
             max_price: Maximum price filter
             sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
-            brands: Filter by brands/designers (array)
+            brands: Filter by brands/brands (array)
             sizes: Filter by sizes (array)
             colors: Filter by colors (array)
             conditions: Filter by conditions (array)
@@ -515,7 +584,7 @@ class ProductService:
         List products created by a user.
         
         Args:
-            user_id: User UUID string
+            user_id: User ID (integer)
             page: Page number
             page_size: Items per page
             status_filter: Filter by status (active, inactive, sold, verification_pending)
@@ -528,21 +597,21 @@ class ProductService:
             HTTPException: If user not found or invalid status filter
         """
         try:
-            owner_uuid = UUID(user_id)
-        except ValueError:
+            owner_id = int(user_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid user identifier"
+                detail="Invalid user identifier. Expected integer ID."
             )
         
-        user = self.db.query(User).filter(User.id == owner_uuid).first()
+        user = self.db.query(User).filter(User.id == owner_id).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
         
-        query = self.db.query(Product).filter(Product.owner_id == owner_uuid)
+        query = self.db.query(Product).filter(Product.owner_id == owner_id)
         
         if status_filter:
             normalized_status = status_filter.lower()
@@ -620,7 +689,7 @@ class ProductService:
             min_price: Minimum price filter
             max_price: Maximum price filter
             sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
-            brands: Filter by brands/designers (array)
+            brands: Filter by brands/brands (array)
             sizes: Filter by sizes (array)
             colors: Filter by colors (array)
             conditions: Filter by conditions (array)
@@ -684,7 +753,7 @@ class ProductService:
         Get detailed product information by ID.
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             
         Returns:
             ProductDetailResponse: Complete product details
@@ -693,14 +762,14 @@ class ProductService:
             HTTPException: If product or seller not found
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         
         if not product:
             raise HTTPException(
@@ -754,7 +823,7 @@ class ProductService:
         gender = form_data.get("gender")
         productType = form_data.get("productType")
         subCategory = form_data.get("subCategory")
-        designer = form_data.get("designer")
+        brand = form_data.get("brand")
         size = form_data.get("size")
         colors_raw = form_data.get("colors")
         productStyle = form_data.get("productStyle")
@@ -816,8 +885,8 @@ class ProductService:
         required_fields = []
         if not productType:
             required_fields.append("productType")
-        if not designer:
-            required_fields.append("designer")
+        if not brand:
+            required_fields.append("brand")
         if not productStyle:
             required_fields.append("productStyle")
         if required_fields:
@@ -826,14 +895,120 @@ class ProductService:
                 detail=f"Missing required fields: {', '.join(required_fields)}"
             )
         
-        normalized_category = category.lower()
-        if normalized_category in {"fashion", "lifestyle"} and not gender:
+        # Validate integer IDs for category-related fields and store them directly
+        category_id = None
+        product_type_id = None
+        sub_category_id = None
+        gender_id = None
+        brand_id = None
+        
+        # Validate and get main category ID
+        try:
+            category_id = int(category)
+            main_category = self.db.query(MainCategory).filter(MainCategory.id == category_id).first()
+            if not main_category:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid category ID: {category}"
+                )
+        except HTTPException:
+            raise
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid category format. Expected integer ID, got: {category}"
+            )
+        
+        # Validate and get category type ID
+        try:
+            product_type_id = int(productType)
+            category_type = self.db.query(CategoryType).filter(CategoryType.id == product_type_id).first()
+            if not category_type:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid productType ID: {productType}"
+                )
+        except HTTPException:
+            raise
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid productType format. Expected integer ID, got: {productType}"
+            )
+        
+        # Validate and get sub category ID
+        if subCategory:
+            try:
+                sub_category_id = int(subCategory)
+                sub_cat = self.db.query(SubCategory).filter(SubCategory.id == sub_category_id).first()
+                if not sub_cat:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid subCategory ID: {subCategory}"
+                    )
+            except HTTPException:
+                raise
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid subCategory format. Expected integer ID, got: {subCategory}"
+                )
+        
+        # Validate and get gender ID
+        if gender:
+            try:
+                gender_id = int(gender)
+                gender_obj = self.db.query(Gender).filter(Gender.id == gender_id).first()
+                if not gender_obj:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid gender ID: {gender}"
+                    )
+            except HTTPException:
+                raise
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid gender format. Expected integer ID, got: {gender}"
+                )
+        
+        # Validate and get brand ID
+        try:
+            brand_id = int(brand)
+            brand = self.db.query(Brand).filter(Brand.id == brand_id).first()
+            if not brand:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid brand ID: {brand}"
+                )
+            if not brand.active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Brand '{brand.name}' is not active"
+                )
+        except HTTPException:
+            raise
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid brand format. Expected integer ID, got: {brand}"
+            )
+        
+        # Validate category-specific requirements (need to get category name for validation)
+        main_category_obj = self.db.query(MainCategory).filter(MainCategory.id == category_id).first()
+        category_name = main_category_obj.name.lower() if main_category_obj else ""
+        
+        if category_name in {"fashion", "lifestyle"} and not gender_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="gender is required for Fashion or Lifestyle categories"
             )
         
-        if productType and productType.lower() in {"tops", "bottoms", "footwear", "accessories"} and not size:
+        # Get category type name for validation
+        category_type_obj = self.db.query(CategoryType).filter(CategoryType.id == product_type_id).first()
+        product_type_name = category_type_obj.name.lower() if category_type_obj else ""
+        
+        if product_type_name in {"tops", "bottoms", "footwear", "accessories"} and not size:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="size is required for Fashion items (Tops, Bottoms, Footwear, Accessories)"
@@ -943,16 +1118,16 @@ class ProductService:
                     detail="deliveryTime must be one of: same_day, 1_3_days, 2_5_days, 4_7_days"
                 )
         
-        # Verify user exists and fetch UUID instance
+        # Verify user exists and fetch user ID
         try:
-            user_uuid = UUID(user_id)
-        except ValueError:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid user identifier"
+                detail="Invalid user identifier. Expected integer ID."
             )
         
-        user = self.db.query(User).filter(User.id == user_uuid).first()
+        user = self.db.query(User).filter(User.id == user_id_int).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1009,11 +1184,11 @@ class ProductService:
         stock_status_value = "In Stock" if stock_quantity_value > 0 else "Out of Stock"
         
         product = Product(
-            owner_id=user_uuid,
+            owner_id=user_id_int,
             title=title,
             description=description,
             price=price_decimal,
-            category=category,
+            category_id=category_id,
             condition=condition,
             deal_method=deal_method_value,
             meetup_date=meetupDate,
@@ -1027,10 +1202,10 @@ class ProductService:
             verification_code=verification_code,
             verification_expires_at=verification_expires_at,
             verification_attempts=0,
-            gender=gender,
-            product_type=productType,
-            sub_category=subCategory,
-            designer=designer,
+            gender_id=gender_id,
+            product_type_id=product_type_id,
+            sub_category_id=sub_category_id,
+            brand_id=brand_id,
             size=size,
             colors=colors,
             product_style=productStyle,
@@ -1075,7 +1250,7 @@ class ProductService:
         Send or resend the verification code for a product listing.
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             user_id: Current authenticated user ID
             
         Returns:
@@ -1085,18 +1260,26 @@ class ProductService:
             HTTPException: If product not found, unauthorized, or already verified
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         if not product:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
         
-        if str(product.owner_id) != user_id:
+        try:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier. Expected integer ID."
+            )
+        
+        if product.owner_id != user_id_int:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
         
         if product.is_verified:
@@ -1132,7 +1315,7 @@ class ProductService:
         Verify a product listing using the received verification code.
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             verification_data: Verification request with code
             user_id: Current authenticated user ID
             
@@ -1143,18 +1326,26 @@ class ProductService:
             HTTPException: If verification fails
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         if not product:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
         
-        if str(product.owner_id) != user_id:
+        try:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier. Expected integer ID."
+            )
+        
+        if product.owner_id != user_id_int:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this product")
         
         if product.is_verified:
@@ -1197,7 +1388,7 @@ class ProductService:
         Update a product listing.
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             product_data: Product update data
             user_id: Current authenticated user ID
             
@@ -1208,14 +1399,14 @@ class ProductService:
             HTTPException: If product not found or user not authorized
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         
         if not product:
             raise HTTPException(
@@ -1223,7 +1414,15 @@ class ProductService:
                 detail="Product not found"
             )
         
-        if str(product.owner_id) != user_id:
+        try:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier. Expected integer ID."
+            )
+        
+        if product.owner_id != user_id_int:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to update this product"
@@ -1245,7 +1444,7 @@ class ProductService:
         Add or replace images for an existing product.
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             images: List of image files to upload
             user_id: Current authenticated user ID
             
@@ -1256,14 +1455,14 @@ class ProductService:
             HTTPException: If product not found, user not authorized, or upload fails
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         
         if not product:
             raise HTTPException(
@@ -1271,7 +1470,15 @@ class ProductService:
                 detail="Product not found"
             )
         
-        if str(product.owner_id) != user_id:
+        try:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier. Expected integer ID."
+            )
+        
+        if product.owner_id != user_id_int:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to update this product"
@@ -1317,21 +1524,21 @@ class ProductService:
         Delete a product listing (soft delete).
         
         Args:
-            product_id: Product UUID string
+            product_id: Product ID (integer)
             user_id: Current authenticated user ID
             
         Raises:
             HTTPException: If product not found or user not authorized
         """
         try:
-            product_uuid = UUID(product_id)
-        except ValueError:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format"
+                detail="Invalid product ID format. Expected integer ID."
             )
         
-        product = self.db.query(Product).filter(Product.id == product_uuid).first()
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
         
         if not product:
             raise HTTPException(
@@ -1339,7 +1546,15 @@ class ProductService:
                 detail="Product not found"
             )
         
-        if str(product.owner_id) != user_id:
+        try:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user identifier. Expected integer ID."
+            )
+        
+        if product.owner_id != user_id_int:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to delete this product"

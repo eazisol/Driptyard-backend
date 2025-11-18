@@ -5,7 +5,6 @@ This module contains admin-only endpoints for managing the platform.
 """
 
 from datetime import datetime, timedelta
-from uuid import UUID
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -44,14 +43,14 @@ def verify_admin_access(current_user_id: str, db: Session) -> User:
         HTTPException: If user is not found or not admin
     """
     try:
-        user_uuid = UUID(current_user_id)
-    except ValueError:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user identifier"
+            detail="Invalid user identifier. Expected integer ID."
         )
     
-    user = db.query(User).filter(User.id == user_uuid).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user:
         raise HTTPException(
@@ -298,7 +297,7 @@ async def update_admin_product(
     is_flagged, and stock_status.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         update_data: Product update data
         current_user_id: Current authenticated user ID
         db: Database session
@@ -314,14 +313,20 @@ async def update_admin_product(
     
     # Get product
     try:
-        product_uuid = UUID(product_id)
+        try:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format. Expected integer ID."
+            )
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product ID format"
         )
     
-    product = db.query(Product).filter(Product.id == product_uuid).first()
+    product = db.query(Product).filter(Product.id == product_id_int).first()
     
     if not product:
         raise HTTPException(
@@ -384,7 +389,7 @@ async def delete_admin_product(
     Permanently deletes a product from the database.
     
     Args:
-        product_id: Product UUID
+        product_id: Product ID (integer)
         current_user_id: Current authenticated user ID
         db: Database session
         
@@ -396,14 +401,20 @@ async def delete_admin_product(
     
     # Get product
     try:
-        product_uuid = UUID(product_id)
+        try:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format. Expected integer ID."
+            )
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product ID format"
         )
     
-    product = db.query(Product).filter(Product.id == product_uuid).first()
+    product = db.query(Product).filter(Product.id == product_id_int).first()
     
     if not product:
         raise HTTPException(

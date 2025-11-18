@@ -5,14 +5,13 @@ This module contains models for main categories, category types, sub categories,
 brands, and gender.
 """
 
-from sqlalchemy import Column, String, Boolean, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Boolean, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 
-from app.models.base import BaseModel
+from app.models.base import CategoryBaseModel
 
 
-class MainCategory(BaseModel):
+class MainCategory(CategoryBaseModel):
     """Main category model (Fashion, Collectibles, Lifestyle)."""
     
     __tablename__ = "main_categories"
@@ -23,34 +22,34 @@ class MainCategory(BaseModel):
     category_types = relationship("CategoryType", back_populates="main_category", cascade="all, delete-orphan")
 
 
-class CategoryType(BaseModel):
+class CategoryType(CategoryBaseModel):
     """Category type model with parent reference to main category."""
     
     __tablename__ = "category_types"
     
     name = Column(String(100), nullable=False, index=True)
-    parent_id = Column(UUID(as_uuid=True), ForeignKey("main_categories.id"), nullable=False, index=True)
+    main_category_id = Column(Integer, ForeignKey("main_categories.id"), nullable=False, index=True)
     
     # Relationships
     main_category = relationship("MainCategory", back_populates="category_types")
     sub_categories = relationship("SubCategory", back_populates="category_type", cascade="all, delete-orphan")
 
 
-class SubCategory(BaseModel):
+class SubCategory(CategoryBaseModel):
     """Sub category model with type and gender references."""
     
     __tablename__ = "sub_categories"
     
     name = Column(String(100), nullable=False, index=True)
-    type_id = Column(UUID(as_uuid=True), ForeignKey("category_types.id"), nullable=False, index=True)
-    gender_id = Column(UUID(as_uuid=True), ForeignKey("genders.id"), nullable=True, index=True)
+    type_id = Column(Integer, ForeignKey("category_types.id"), nullable=False, index=True)
+    gender_id = Column(Integer, ForeignKey("genders.id"), nullable=True, index=True)
     
     # Relationships
     category_type = relationship("CategoryType", back_populates="sub_categories")
     gender = relationship("Gender", back_populates="sub_categories")
 
 
-class Brand(BaseModel):
+class Brand(CategoryBaseModel):
     """Brand model for product brands."""
     
     __tablename__ = "brands"
@@ -59,7 +58,7 @@ class Brand(BaseModel):
     active = Column(Boolean, default=True, nullable=False, index=True)
 
 
-class Gender(BaseModel):
+class Gender(CategoryBaseModel):
     """Gender model (male, female, unisex)."""
     
     __tablename__ = "genders"

@@ -4,13 +4,13 @@ Order-related database models.
 This module contains Order models for the e-commerce platform.
 """
 
-from sqlalchemy import Column, String, Text, Numeric, Boolean, Integer, DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Numeric, Boolean, Integer, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
 
-from app.models.base import BaseModel
+from app.models.base import UserProductBaseModel
 
 
-class Order(BaseModel):
+class Order(UserProductBaseModel):
     """Order model for storing order information."""
     
     __tablename__ = "orders"
@@ -19,9 +19,9 @@ class Order(BaseModel):
     order_number = Column(String(50), unique=True, nullable=False, index=True)
     
     # Product and participants
-    product_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    buyer_id = Column(UUID(as_uuid=True), nullable=False, index=True)
-    seller_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
     # Order details
     quantity = Column(Integer, default=1, nullable=False)
@@ -44,7 +44,7 @@ class Order(BaseModel):
     buyer_notes = Column(Text, nullable=True)
     seller_notes = Column(Text, nullable=True)
     
-    # TODO: Add relationships when other models are ready
-    # product = relationship("Product", back_populates="orders")
-    # buyer = relationship("User", foreign_keys=[buyer_id], back_populates="orders_as_buyer")
-    # seller = relationship("User", foreign_keys=[seller_id], back_populates="orders_as_seller")
+    # Relationships
+    product = relationship("Product", foreign_keys=[product_id])
+    buyer = relationship("User", foreign_keys=[buyer_id])
+    seller = relationship("User", foreign_keys=[seller_id])

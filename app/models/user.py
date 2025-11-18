@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 from sqlalchemy import Column, String, Boolean, Text, DateTime, Index
 from sqlalchemy.dialects.postgresql import JSON
 
-from app.models.base import BaseModel
+from app.models.base import UserProductBaseModel
 
 
-class User(BaseModel):
+class User(UserProductBaseModel):
     """User model for storing user information."""
     
     __tablename__ = "users"
@@ -43,7 +43,7 @@ class User(BaseModel):
     # conversations = relationship("Conversation", back_populates="participants")
 
 
-class EmailVerification(BaseModel):
+class EmailVerification(UserProductBaseModel):
     """Email verification model for storing verification codes."""
     
     __tablename__ = "email_verifications"
@@ -78,7 +78,7 @@ class EmailVerification(BaseModel):
         )
 
 
-class RegistrationData(BaseModel):
+class RegistrationData(UserProductBaseModel):
     """Registration data model for temporary storage during verification."""
     
     __tablename__ = "registration_data"
@@ -96,7 +96,7 @@ class RegistrationData(BaseModel):
     additional_data = Column(JSON, nullable=True)
 
 
-class PasswordResetToken(BaseModel):
+class PasswordResetToken(UserProductBaseModel):
     """Password reset token model for password recovery."""
     
     __tablename__ = "password_reset_tokens"

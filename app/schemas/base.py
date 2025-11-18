@@ -6,13 +6,12 @@ This module contains base schemas that other schemas inherit from.
 
 from pydantic import BaseModel, Field
 from datetime import datetime
-from uuid import UUID
 
 
 class BaseResponseSchema(BaseModel):
     """Base response schema with common fields."""
     
-    id: UUID = Field(..., description="Unique identifier")
+    id: str = Field(..., description="Unique identifier (as string)")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 

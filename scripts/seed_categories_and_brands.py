@@ -79,26 +79,12 @@ def seed_category_types(db: Session, main_categories: dict):
         ],
         "Lifestyle": [
             "Luxury Bicycles",
-            "Road Bikes",
-            "Fixed Gear / Single Speed",
-            "Mountain Bikes",
-            "Folding Bikes",
-            "Framesets / Components",
-            "Helmets",
-            "Gloves",
-            "Riding Apparel",
-            "Bags",
+            "Gear",
             "Tools & Accessories"
         ],
         "Collectibles": [
-            "Pokémon",
-            "Yu-Gi-Oh",
-            "One Piece TCG",
-            "Magic the Gathering",
-            "Labubu",
-            "Bearbrick",
-            "Kaws",
-            "Other"
+            "Trading Cards",
+            "Designer Toys"
         ]
     }
     
@@ -109,14 +95,14 @@ def seed_category_types(db: Session, main_categories: dict):
         for type_name in types:
             existing = db.query(CategoryType).filter(
                 CategoryType.name == type_name,
-                CategoryType.parent_id == main_cat.id
+                CategoryType.main_category_id == main_cat.id
             ).first()
             
             if existing:
                 type_objects[type_name] = existing
                 print(f"  - Category type '{type_name}' already exists")
             else:
-                category_type = CategoryType(name=type_name, parent_id=main_cat.id)
+                category_type = CategoryType(name=type_name, main_category_id=main_cat.id)
                 db.add(category_type)
                 type_objects[type_name] = category_type
                 print(f"  + Created category type: {type_name} (under {main_cat_name})")
@@ -209,6 +195,40 @@ def seed_sub_categories(db: Session, category_types: dict, genders: dict):
         ]
     }
     
+    # Collectibles sub-categories (no gender)
+    collectibles_sub_categories = {
+        "Trading Cards": [
+            "Pokémon",
+            "Yu-Gi-Oh",
+            "One Piece TCG",
+            "Magic the Gathering"
+        ],
+        "Designer Toys": [
+            "Labubu",
+            "Bearbrick",
+            "Kaws",
+            "Other"
+        ]
+    }
+    
+    # Lifestyle sub-categories (no gender)
+    lifestyle_sub_categories = {
+        "Luxury Bicycles": [
+            "Road Bikes",
+            "Fixed Gear / Single Speed",
+            "Mountain Bikes",
+            "Folding Bikes",
+            "Framesets / Components"
+        ],
+        "Gear": [
+            "Helmets",
+            "Gloves",
+            "Riding Apparel",
+            "Bags"
+        ]
+        # "Tools & Accessories" has no sub-categories
+    }
+    
     count = 0
     
     # Seed male sub-categories
@@ -252,6 +272,48 @@ def seed_sub_categories(db: Session, category_types: dict, genders: dict):
                     db.add(sub_category)
                     count += 1
                     print(f"  + Created sub-category: {sub_cat_name} (Female - {type_name})")
+    
+    # Seed Collectibles sub-categories (no gender)
+    for type_name, sub_cats in collectibles_sub_categories.items():
+        if type_name in category_types:
+            type_obj = category_types[type_name]
+            for sub_cat_name in sub_cats:
+                existing = db.query(SubCategory).filter(
+                    SubCategory.name == sub_cat_name,
+                    SubCategory.type_id == type_obj.id,
+                    SubCategory.gender_id == None
+                ).first()
+                
+                if not existing:
+                    sub_category = SubCategory(
+                        name=sub_cat_name,
+                        type_id=type_obj.id,
+                        gender_id=None
+                    )
+                    db.add(sub_category)
+                    count += 1
+                    print(f"  + Created sub-category: {sub_cat_name} (No Gender - {type_name})")
+    
+    # Seed Lifestyle sub-categories (no gender)
+    for type_name, sub_cats in lifestyle_sub_categories.items():
+        if type_name in category_types:
+            type_obj = category_types[type_name]
+            for sub_cat_name in sub_cats:
+                existing = db.query(SubCategory).filter(
+                    SubCategory.name == sub_cat_name,
+                    SubCategory.type_id == type_obj.id,
+                    SubCategory.gender_id == None
+                ).first()
+                
+                if not existing:
+                    sub_category = SubCategory(
+                        name=sub_cat_name,
+                        type_id=type_obj.id,
+                        gender_id=None
+                    )
+                    db.add(sub_category)
+                    count += 1
+                    print(f"  + Created sub-category: {sub_cat_name} (No Gender - {type_name})")
     
     db.commit()
     print(f"\n  + Created {count} new sub-categories")
