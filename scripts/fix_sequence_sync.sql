@@ -46,6 +46,30 @@ BEGIN
     END IF;
 END $$;
 
+-- Fix products sequence (if needed)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = 'products_id_seq') THEN
+        PERFORM setval(
+            'products_id_seq',
+            COALESCE((SELECT MAX(id) FROM products), 0) + 1,
+            false
+        );
+    END IF;
+END $$;
+
+-- Fix orders sequence (if needed)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = 'orders_id_seq') THEN
+        PERFORM setval(
+            'orders_id_seq',
+            COALESCE((SELECT MAX(id) FROM orders), 0) + 1,
+            false
+        );
+    END IF;
+END $$;
+
 -- Verify the fix
 SELECT 
     'email_verifications' as table_name,

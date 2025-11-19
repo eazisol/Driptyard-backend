@@ -29,13 +29,15 @@ def fix_sequence_sync():
         'email_verifications',
         'registration_data',
         'password_reset_tokens',
-        'users'
+        'users',
+        'products',
+        'orders'
     ]
     
     print("Fixing sequence synchronization...")
     print("=" * 60)
     
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         for table in tables_to_fix:
             sequence_name = f"{table}_id_seq"
             
@@ -71,7 +73,6 @@ def fix_sequence_sync():
                 "sequence_name": sequence_name,
                 "new_value": new_seq_value
             })
-            conn.commit()
             
             if new_seq_value > current_seq_value:
                 print(f"[FIXED] '{table}': Sequence updated from {current_seq_value} to {new_seq_value} (max_id={max_id})")
