@@ -506,6 +506,8 @@ async def list_admin_users(
             username=user.username,
             first_name=user.first_name,
             last_name=user.last_name,
+            phone=user.phone,
+            country_code=user.country_code,
             is_active=user.is_active,
             is_verified=user.is_verified,
             is_admin=user.is_admin,
@@ -522,7 +524,7 @@ async def list_admin_users(
     )
 
 
-@router.patch("/users/{user_id}", response_model=AdminUserResponse)
+@router.put("/users/{user_id}", response_model=AdminUserResponse)
 async def update_admin_user(
     user_id: str,
     update_data: AdminUserUpdateRequest,
@@ -530,9 +532,10 @@ async def update_admin_user(
     db: Session = Depends(get_db)
 ):
     """
-    Update user status fields (Admin only).
+    Update user full profile (Admin only).
     
-    Allows admins to update user status fields like is_active and is_verified.
+    Allows admins to update any user profile fields including email, username,
+    personal information, and status fields.
     
     Args:
         user_id: User ID (integer as string)
@@ -544,7 +547,7 @@ async def update_admin_user(
         AdminUserResponse: Updated user
         
     Raises:
-        HTTPException: If user is not admin or user not found
+        HTTPException: If user is not admin, user not found, or validation fails
     """
     # Verify admin access
     verify_admin_access(current_user_id, db)
@@ -566,17 +569,61 @@ async def update_admin_user(
             detail="User not found"
         )
     
-    # Update fields
+    # Get update data (only fields that were provided)
     update_dict = update_data.model_dump(exclude_unset=True)
     
-    if "is_active" in update_dict:
-        user.is_active = update_dict["is_active"]
+    # Validate and update email if provided
+    if "email" in update_dict:
+        email = update_dict["email"]
+        if email and email.lower() != user.email.lower():
+            # Check if email is taken by another user
+            existing = db.query(User).filter(User.email == email.lower()).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email is already taken"
+                )
+            user.email = email.lower()
     
-    if "is_verified" in update_dict:
-        user.is_verified = update_dict["is_verified"]
+    # Validate and update username if provided
+    if "username" in update_dict:
+        username = update_dict["username"]
+        if username:
+            username = username.strip()
+            if username.lower() != user.username.lower():
+                # Check if username is taken by another user
+                existing = db.query(User).filter(User.username == username.lower()).first()
+                if existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Username is already taken"
+                    )
+            user.username = username.lower()
     
-    db.commit()
-    db.refresh(user)
+    # Update other fields
+    updatable_fields = [
+        "first_name", "last_name", "phone", "country_code", "bio",
+        "avatar_url", "company_name", "sin_number", "is_active", "is_verified"
+    ]
+    
+    for field in updatable_fields:
+        if field in update_dict:
+            value = update_dict[field]
+            # Handle string fields - strip whitespace and convert empty strings to None
+            if isinstance(value, str):
+                value = value.strip() if value.strip() else None
+            setattr(user, field, value)
+    
+    # Commit changes
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update user: {str(e)}"
+        )
     
     return AdminUserResponse(
         id=str(user.id),
@@ -584,6 +631,8 @@ async def update_admin_user(
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
+        phone=user.phone,
+        country_code=user.country_code,
         is_active=user.is_active,
         is_verified=user.is_verified,
         is_admin=user.is_admin,
@@ -652,6 +701,8 @@ async def ban_admin_user(
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
+        phone=user.phone,
+        country_code=user.country_code,
         is_active=user.is_active,
         is_verified=user.is_verified,
         is_admin=user.is_admin,
@@ -713,6 +764,8 @@ async def unban_admin_user(
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
+        phone=user.phone,
+        country_code=user.country_code,
         is_active=user.is_active,
         is_verified=user.is_verified,
         is_admin=user.is_admin,

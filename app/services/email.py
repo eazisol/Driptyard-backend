@@ -147,74 +147,86 @@ class EmailService:
                     font-family: Arial, sans-serif;
                     line-height: 1.6;
                     color: #333;
+                    background-color: #f0f0f0;
+                    margin: 0;
+                    padding: 40px 20px;
+                }}
+                .email-card {{
+                    background-color: #ffffff;
                     max-width: 600px;
                     margin: 0 auto;
-                    padding: 20px;
+                    border-radius: 12px;
+                    border: 1px solid #e0e0e0;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    padding: 50px 40px;
                 }}
-                .container {{
-                    background-color: #f9f9f9;
-                    border-radius: 10px;
-                    padding: 30px;
-                    margin: 20px 0;
-                }}
-                .header {{
+                .title {{
+                    color: #000000;
+                    font-size: 36px;
+                    font-weight: bold;
+                    margin: 0 0 30px 0;
                     text-align: center;
-                    color: #2c3e50;
-                    margin-bottom: 30px;
+                    font-family: Arial, sans-serif;
                 }}
-                .token {{
-                    background-color: #3498db;
-                    color: white;
-                    font-size: 32px;
+                .greeting {{
+                    color: #333333;
+                    font-size: 16px;
+                    margin: 0 0 15px 0;
+                    font-weight: normal;
+                }}
+                .instruction {{
+                    color: #333333;
+                    font-size: 16px;
+                    margin: 0 0 30px 0;
+                    font-weight: normal;
+                }}
+                .otp-code {{
+                    color: #22c55e;
+                    font-size: 48px;
                     font-weight: bold;
                     text-align: center;
-                    padding: 20px;
-                    border-radius: 8px;
-                    letter-spacing: 8px;
-                    margin: 30px 0;
+                    margin: 40px 0;
+                    letter-spacing: 6px;
+                    font-family: Arial, sans-serif;
                 }}
-                .info {{
-                    background-color: #fff;
-                    padding: 20px;
-                    border-radius: 8px;
-                    border-left: 4px solid #3498db;
-                    margin: 20px 0;
+                .warning {{
+                    color: #333333;
+                    font-size: 16px;
+                    margin: 30px 0 20px 0;
+                    line-height: 1.6;
+                    font-weight: normal;
                 }}
-                .footer {{
-                    text-align: center;
-                    color: #7f8c8d;
-                    font-size: 12px;
-                    margin-top: 30px;
+                .closing {{
+                    color: #333333;
+                    font-size: 16px;
+                    margin: 30px 0 10px 0;
+                    font-weight: normal;
+                }}
+                .dots {{
+                    color: #333333;
+                    font-size: 16px;
+                    margin: 0;
+                    text-align: left;
                 }}
             </style>
         </head>
         <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🔐 Password Reset Request</h1>
-                </div>
+            <div class="email-card">
+                <h1 class="title">Password Reset OTP</h1>
                 
-                <p>Hello,</p>
+                <p class="greeting">Dear User,</p>
                 
-                <p>We received a request to reset your password for your Driptyard account ({email}).</p>
+                <p class="instruction">Your One-Time Password (OTP) for password reset is:</p>
                 
-                <p>Use the following code to reset your password:</p>
+                <div class="otp-code">{reset_token}</div>
                 
-                <div class="token">{reset_token}</div>
+                <p class="warning">
+                    Please use this OTP to complete your password reset process. Do not share this code with anyone.
+                </p>
                 
-                <div class="info">
-                    <strong>⏰ This code will expire in 15 minutes</strong>
-                    <p style="margin: 10px 0 0 0;">For security reasons, please use this code as soon as possible.</p>
-                </div>
+                <p class="closing">Thank you for using Driptyard!</p>
                 
-                <p>If you didn't request a password reset, please ignore this email and your password will remain unchanged.</p>
-                
-                <p>For security reasons, never share this code with anyone.</p>
-                
-                <div class="footer">
-                    <p>This is an automated email. Please do not reply to this message.</p>
-                    <p>&copy; 2024 Driptyard. All rights reserved.</p>
-                </div>
+                <p class="dots">...</p>
             </div>
         </body>
         </html>

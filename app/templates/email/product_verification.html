@@ -3,83 +3,96 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Product Listing Verification</title>
+    <title>Product Verification OTP</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             line-height: 1.6;
             color: #333;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .email-card {
+            background-color: #ffffff;
             max-width: 600px;
             margin: 0 auto;
-            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 50px 40px;
         }
-        .header {
-            background-color: #111827;
-            color: white;
-            padding: 20px;
+        .title {
+            color: #000000;
+            font-size: 36px;
+            font-weight: bold;
+            margin: 0 0 30px 0;
             text-align: center;
-            border-radius: 8px 8px 0 0;
+            font-family: Arial, sans-serif;
         }
-        .content {
-            background-color: #f9fafb;
-            padding: 30px;
-            border-radius: 0 0 8px 8px;
+        .greeting {
+            color: #333333;
+            font-size: 16px;
+            margin: 0 0 15px 0;
+            font-weight: normal;
         }
-        .verification-code {
-            background-color: #4F46E5;
-            color: #f9fafb;
-            font-size: 32px;
+        .instruction {
+            color: #333333;
+            font-size: 16px;
+            margin: 0 0 30px 0;
+            font-weight: normal;
+        }
+        .otp-code {
+            color: #22c55e;
+            font-size: 48px;
             font-weight: bold;
             text-align: center;
-            padding: 20px;
-            border-radius: 8px;
-            letter-spacing: 4px;
-            margin: 20px 0;
+            margin: 40px 0;
+            letter-spacing: 6px;
+            font-family: Arial, sans-serif;
         }
-        .info {
-            background-color: #e0e7ff;
-            border-left: 4px solid #4F46E5;
-            padding: 16px;
-            border-radius: 6px;
-            margin: 20px 0;
+        .warning {
+            color: #333333;
+            font-size: 16px;
+            margin: 30px 0 20px 0;
+            line-height: 1.6;
+            font-weight: normal;
         }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            color: #6b7280;
-            font-size: 14px;
+        .closing {
+            color: #333333;
+            font-size: 16px;
+            margin: 30px 0 10px 0;
+            font-weight: normal;
+        }
+        .dots {
+            color: #333333;
+            font-size: 16px;
+            margin: 0;
+            text-align: left;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Verify Your Product Listing</h1>
-    </div>
-    <div class="content">
-        <p>Hello,</p>
-        <p>Thanks for submitting <strong>{{ product_title }}</strong> on Driptyard.</p>
-        <p>Please confirm this listing by entering the verification code below:</p>
-
-        <div class="verification-code">
+    <div class="email-card">
+        <h1 class="title">Product Verification OTP</h1>
+        
+        <p class="greeting">Dear User,</p>
+        
+        <p class="instruction">Thanks for submitting <strong>{{ product_title }}</strong> on Driptyard.</p>
+        
+        <p class="instruction">Your One-Time Password (OTP) for product verification is:</p>
+        
+        <div class="otp-code">
             {{ verification_code }}
         </div>
-
-        <div class="info">
-            <strong>What happens next?</strong>
-            <ul style="margin: 12px 0 0 16px; padding: 0;">
-                <li>This code expires in 30 minutes.</li>
-                <li>Once verified, your product will be approved and published.</li>
-                <li>You can create new listings after completing this verification.</li>
-            </ul>
-        </div>
-
-        <p>If you didn’t request this, please ignore this email.</p>
-        <p>Need help? Contact us at support@driptyard.com.</p>
-    </div>
-    <div class="footer">
-        <p>© 2024 Driptyard. All rights reserved.</p>
-        <p>This email was sent to {{ email }}</p>
+        
+        <p class="warning">
+            Please use this OTP to complete your product verification process. This code expires in 30 minutes. Do not share this code with anyone.
+        </p>
+        
+        <p class="closing">Thank you for using Driptyard!</p>
+        
+        <p class="dots">...</p>
     </div>
 </body>
 </html>
-

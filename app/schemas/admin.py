@@ -7,7 +7,7 @@ This module contains admin-related request and response schemas.
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 
 class StatsOverviewResponse(BaseModel):
@@ -70,6 +70,8 @@ class AdminUserResponse(BaseModel):
     username: str = Field(..., description="Username")
     first_name: Optional[str] = Field(None, description="First name")
     last_name: Optional[str] = Field(None, description="Last name")
+    phone: Optional[str] = Field(None, description="Phone number")
+    country_code: Optional[str] = Field(None, description="Country code")
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
     is_admin: bool = Field(..., description="Whether user is admin")
@@ -91,8 +93,28 @@ class AdminUserListResponse(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    """Schema for admin user status update."""
+    """Schema for admin user full profile update."""
     
+    email: Optional[EmailStr] = Field(None, description="User email address")
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="Username")
+    first_name: Optional[str] = Field(None, max_length=100, description="First name")
+    last_name: Optional[str] = Field(None, max_length=100, description="Last name")
+    phone: Optional[str] = Field(None, max_length=20, description="Phone number")
+    country_code: Optional[str] = Field(None, min_length=2, max_length=3, description="Country code")
+    bio: Optional[str] = Field(None, max_length=500, description="User bio")
+    avatar_url: Optional[str] = Field(None, max_length=500, description="Avatar URL")
+    company_name: Optional[str] = Field(None, max_length=200, description="Company name")
+    sin_number: Optional[str] = Field(None, max_length=20, description="Social Insurance Number")
     is_active: Optional[bool] = Field(None, description="Whether user is active")
     is_verified: Optional[bool] = Field(None, description="Whether user is verified")
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format."""
+        if v is None:
+            return v
+        if not v.replace('_', '').replace('-', '').isalnum():
+            raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
+        return v.lower()
 
