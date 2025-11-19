@@ -92,7 +92,7 @@ async def login(
     
     # Create user response
     user_response = {
-        "id": user.id,
+        "id": str(user.id),  # Convert integer ID to string for schema validation
         "email": user.email,
         "username": user.username,
         "phone": user.phone,
@@ -197,7 +197,15 @@ async def refresh_token(
     Raises:
         HTTPException: If token refresh fails
     """
-    user = db.query(User).filter(User.id == current_user_id).first()
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier"
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user or not user.is_active:
         raise HTTPException(
@@ -210,7 +218,7 @@ async def refresh_token(
     
     # Create user response
     user_response = {
-        "id": user.id,
+        "id": str(user.id),  # Convert integer ID to string for schema validation
         "email": user.email,
         "username": user.username,
         "phone": user.phone,

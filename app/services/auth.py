@@ -211,7 +211,7 @@ class AuthService:
         
         # Create user response
         user_response = {
-            "id": user.id,
+            "id": str(user.id),  # Convert integer ID to string for schema validation
             "email": user.email,
             "username": user.username,
             "phone": user.phone,

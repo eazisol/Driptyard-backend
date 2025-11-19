@@ -15,6 +15,7 @@ from app.database import get_db
 from app.security import get_current_user_id
 from app.models.user import User
 from app.models.product import Product
+from app.models.category import MainCategory
 from app.schemas.admin import (
     StatsOverviewResponse,
     AdminProductResponse,
@@ -227,7 +228,10 @@ async def list_admin_products(
         query = query.filter(Product.title.ilike(search_term))
     
     if category:
-        query = query.filter(Product.category == category)
+        # Filter by category name - use left join to handle NULL category_ids
+        query = query.outerjoin(MainCategory, Product.category_id == MainCategory.id).filter(
+            MainCategory.name.ilike(f"%{category}%")
+        )
     
     if is_active is not None:
         query = query.filter(Product.is_active == is_active)
@@ -257,11 +261,14 @@ async def list_admin_products(
     # Convert to response format
     product_list = []
     for product in products:
+        # Get category name from relationship
+        category_name = product.category.name if product.category else None
+        
         product_list.append(AdminProductResponse(
             id=str(product.id),
             title=product.title,
             price=product.price,
-            category=product.category,
+            category=category_name,
             condition=product.condition,
             stock_quantity=product.stock_quantity,
             stock_status=product.stock_status,
@@ -313,17 +320,11 @@ async def update_admin_product(
     
     # Get product
     try:
-        try:
-            product_id_int = int(product_id)
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format. Expected integer ID."
-            )
-    except ValueError:
+        product_id_int = int(product_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
+            detail="Invalid product ID format. Expected integer ID."
         )
     
     product = db.query(Product).filter(Product.id == product_id_int).first()
@@ -359,11 +360,14 @@ async def update_admin_product(
     db.commit()
     db.refresh(product)
     
+    # Get category name from relationship
+    category_name = product.category.name if product.category else None
+    
     return AdminProductResponse(
         id=str(product.id),
         title=product.title,
         price=product.price,
-        category=product.category,
+        category=category_name,
         condition=product.condition,
         stock_quantity=product.stock_quantity,
         stock_status=product.stock_status,
@@ -401,17 +405,11 @@ async def delete_admin_product(
     
     # Get product
     try:
-        try:
-            product_id_int = int(product_id)
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid product ID format. Expected integer ID."
-            )
-    except ValueError:
+        product_id_int = int(product_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format"
+            detail="Invalid product ID format. Expected integer ID."
         )
     
     product = db.query(Product).filter(Product.id == product_id_int).first()
@@ -537,7 +535,7 @@ async def update_admin_user(
     Allows admins to update user status fields like is_active and is_verified.
     
     Args:
-        user_id: User UUID
+        user_id: User ID (integer as string)
         update_data: User update data
         current_user_id: Current authenticated user ID
         db: Database session
@@ -553,14 +551,14 @@ async def update_admin_user(
     
     # Get user
     try:
-        user_uuid = UUID(user_id)
-    except ValueError:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format. Expected integer."
         )
     
-    user = db.query(User).filter(User.id == user_uuid).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user:
         raise HTTPException(
@@ -606,7 +604,7 @@ async def ban_admin_user(
     Sets user's is_active to False (bans the user).
     
     Args:
-        user_id: User UUID
+        user_id: User ID (integer as string)
         current_user_id: Current authenticated user ID
         db: Database session
         
@@ -621,14 +619,14 @@ async def ban_admin_user(
     
     # Get user
     try:
-        user_uuid = UUID(user_id)
-    except ValueError:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format. Expected integer."
         )
     
-    user = db.query(User).filter(User.id == user_uuid).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user:
         raise HTTPException(
@@ -674,7 +672,7 @@ async def unban_admin_user(
     Sets user's is_active to True (unbans the user).
     
     Args:
-        user_id: User UUID
+        user_id: User ID (integer as string)
         current_user_id: Current authenticated user ID
         db: Database session
         
@@ -689,14 +687,14 @@ async def unban_admin_user(
     
     # Get user
     try:
-        user_uuid = UUID(user_id)
-    except ValueError:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format. Expected integer."
         )
     
-    user = db.query(User).filter(User.id == user_uuid).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user:
         raise HTTPException(
@@ -735,7 +733,7 @@ async def delete_admin_user(
     Permanently deletes a user from the database.
     
     Args:
-        user_id: User UUID
+        user_id: User ID (integer as string)
         current_user_id: Current authenticated user ID
         db: Database session
         
@@ -747,14 +745,14 @@ async def delete_admin_user(
     
     # Get user
     try:
-        user_uuid = UUID(user_id)
-    except ValueError:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user ID format"
+            detail="Invalid user ID format. Expected integer."
         )
     
-    user = db.query(User).filter(User.id == user_uuid).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     
     if not user:
         raise HTTPException(

@@ -6,7 +6,6 @@ validation, and data transformations.
 """
 
 from typing import Dict
-from uuid import UUID
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -30,7 +29,7 @@ class UserService:
     def _user_to_response(self, user: User) -> Dict:
         """Convert User model to UserResponse dictionary."""
         return {
-            "id": user.id,
+            "id": str(user.id),  # Convert integer ID to string for schema validation
             "email": user.email,
             "username": user.username,
             "phone": user.phone,
@@ -53,7 +52,7 @@ class UserService:
         Get current user profile.
         
         Args:
-            user_id: User UUID string
+            user_id: User ID string (integer as string)
             
         Returns:
             Dict: User information as UserResponse dictionary
@@ -62,14 +61,14 @@ class UserService:
             HTTPException: If user not found
         """
         try:
-            user_uuid = UUID(user_id)
-        except ValueError:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid user identifier"
             )
         
-        user = self.db.query(User).filter(User.id == user_uuid).first()
+        user = self.db.query(User).filter(User.id == user_id_int).first()
         
         if not user:
             raise HTTPException(
@@ -84,7 +83,7 @@ class UserService:
         Update user profile with JSON data.
         
         Args:
-            user_id: User UUID string
+            user_id: User ID string (integer as string)
             user_update: User update data
             
         Returns:
@@ -94,14 +93,14 @@ class UserService:
             HTTPException: If user not found or validation fails
         """
         try:
-            user_uuid = UUID(user_id)
-        except ValueError:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid user identifier"
             )
         
-        user = self.db.query(User).filter(User.id == user_uuid).first()
+        user = self.db.query(User).filter(User.id == user_id_int).first()
         
         if not user:
             raise HTTPException(
@@ -161,7 +160,7 @@ class UserService:
         Upload user avatar image.
         
         Args:
-            user_id: User UUID string
+            user_id: User ID string (integer as string)
             avatar: Avatar image file
             
         Returns:
@@ -171,14 +170,14 @@ class UserService:
             HTTPException: If user not found, upload fails, or invalid file type
         """
         try:
-            user_uuid = UUID(user_id)
-        except ValueError:
+            user_id_int = int(user_id)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid user identifier"
             )
         
-        user = self.db.query(User).filter(User.id == user_uuid).first()
+        user = self.db.query(User).filter(User.id == user_id_int).first()
         
         if not user:
             raise HTTPException(
