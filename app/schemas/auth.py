@@ -115,13 +115,20 @@ class PasswordResetVerify(BaseCreateSchema):
     """Schema for password reset verification."""
     
     email: EmailStr = Field(..., description="User email address")
-    reset_token: str = Field(..., min_length=6, max_length=6, description="6-digit reset token")
+    reset_token: str | None = Field(None, description="6-digit reset token (optional for admin)")
     new_password: str = Field(..., min_length=8, max_length=100, description="New password")
+    is_admin: bool = Field(False, description="Whether this is an admin password reset request")
+    current_password: str | None = Field(None, description="Current password (required for admin)")
     
     @field_validator('reset_token')
     @classmethod
     def validate_reset_token(cls, v):
         """Validate reset token format."""
+        # reset_token is optional (None allowed for admin users)
+        if v is None:
+            return None
+        if len(v) != 6:
+            raise ValueError('Reset token must be exactly 6 digits')
         if not v.isdigit():
             raise ValueError('Reset token must contain only digits')
         return v

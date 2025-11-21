@@ -322,6 +322,7 @@ async def verify_password_reset(
 ):
     """
     Verify reset token and update password.
+    For admin users: verify current password instead of reset token.
     
     Args:
         request: Reset verification with email, token, and new password
@@ -334,6 +335,57 @@ async def verify_password_reset(
         HTTPException: If verification or password update fails
     """
     try:
+        # Special handling for admin users
+        if request.is_admin:
+            # Find admin user by email
+            user = db.query(User).filter(
+                User.email == request.email,
+                User.is_admin == True
+            ).first()
+
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Admin user not found"
+                )
+
+            # Check if user is active
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Account is deactivated"
+                )
+
+            # Verify current password
+            if not request.current_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Current password is required for admin password reset"
+                )
+
+            if not verify_password(request.current_password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Current password is incorrect"
+                )
+
+            # Update password directly (no token needed)
+            user.hashed_password = get_password_hash(request.new_password)
+            user.updated_at = datetime.utcnow()
+            db.commit()
+
+            return {
+                "message": "Password has been updated successfully. You can now login with your new password."
+            }
+
+        # Normal flow for non-admin users
+        # Validate reset token is provided
+        if not request.reset_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reset token is required for password reset"
+            )
+
         # Find the reset token
         token_record = db.query(PasswordResetToken).filter(
             PasswordResetToken.email == request.email,
