@@ -998,10 +998,10 @@ class ProductService:
         main_category_obj = self.db.query(MainCategory).filter(MainCategory.id == category_id).first()
         category_name = main_category_obj.name.lower() if main_category_obj else ""
         
-        if category_name in {"fashion", "lifestyle"} and not gender_id:
+        if category_name in {"fashion"} and not gender_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="gender is required for Fashion or Lifestyle categories"
+                detail="gender is required for Fashion Category"
             )
         
         # Get category type name for validation
