@@ -17,7 +17,9 @@ from app.schemas.product import (
     ProductPaginationResponse,
     ProductVerificationRequest
 )
+from app.schemas.report import ProductReportRequest, ProductReportResponse
 from app.services.product import ProductService
+from app.services.report import ProductReportService
 
 router = APIRouter()
 
@@ -280,6 +282,35 @@ async def get_product(
     """
     service = ProductService(db)
     return service.get_product(product_id)
+
+
+@router.post("/{product_id}/report", response_model=ProductReportResponse, status_code=status.HTTP_201_CREATED)
+async def report_product(
+    product_id: str,
+    report_data: ProductReportRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Report a product with a reason.
+    
+    Users can report products they find inappropriate or violating platform rules.
+    Each user can only report a product once.
+    
+    Args:
+        product_id: Product ID (integer) to report
+        report_data: Report data containing reason
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        ProductReportResponse: Created report details
+        
+    Raises:
+        HTTPException: If product not found, user already reported, or validation fails
+    """
+    service = ProductReportService(db)
+    return service.report_product(current_user_id, product_id, report_data.reason)
 
 
 @router.post("/", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)

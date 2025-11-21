@@ -14,6 +14,7 @@ from app.models.user import User, EmailVerification, RegistrationData
 from app.models.category import MainCategory, CategoryType, SubCategory, Brand, Gender
 from app.models.product import Product
 from app.models.order import Order
+from app.models.report import ReportStatus, ProductReport
 
 target_metadata = Base.metadata
 # this is the Alembic Config object, which provides

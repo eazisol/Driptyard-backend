@@ -13,6 +13,7 @@ from app.models.category import (
     Brand,
     Gender
 )
+from app.models.report import ReportStatus, ProductReport
 
 # Placeholder imports for future models
 # from app.models.product import Product
@@ -28,6 +29,8 @@ __all__ = [
     "SubCategory",
     "Brand",
     "Gender",
+    "ReportStatus",
+    "ProductReport",
     # "Product",
     # "Order",
 ]

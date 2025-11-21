@@ -25,6 +25,11 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserUpdateRequest
 )
+from app.schemas.report import (
+    ReportedProductListResponse,
+    AdminReportListResponse
+)
+from app.services.report import ProductReportService
 
 router = APIRouter()
 
@@ -857,3 +862,193 @@ async def delete_admin_user(
     
     return None
 
+
+@router.get("/reports", response_model=ReportedProductListResponse)
+async def list_reported_products(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: Optional[str] = Query(None, description="Filter by report status (pending, active, approved, rejected, processing, inactive)"),
+    product_id: Optional[str] = Query(None, description="Filter by product ID"),
+    user_id: Optional[str] = Query(None, description="Filter by reporting user ID"),
+    date_from: Optional[datetime] = Query(None, description="Filter reports from this date (ISO format)"),
+    date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
+):
+    """
+    List reported products with aggregation (Admin only).
+    
+    Returns a paginated list of products that have been reported, grouped by product.
+    Each product appears once with a count of total reports.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        status: Filter by report status
+        product_id: Filter by specific product ID
+        user_id: Filter by reporting user ID
+        date_from: Filter reports from this date
+        date_to: Filter reports to this date
+        
+    Returns:
+        ReportedProductListResponse: Paginated list of reported products
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    service = ProductReportService(db)
+    return service.get_reported_products(
+        page=page,
+        page_size=page_size,
+        status_filter=status,
+        product_id=product_id,
+        user_id=user_id,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+
+@router.get("/reports/all", response_model=AdminReportListResponse)
+async def list_all_reports(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: Optional[str] = Query(None, description="Filter by report status (pending, active, approved, rejected, processing, inactive)"),
+    product_id: Optional[str] = Query(None, description="Filter by product ID"),
+    user_id: Optional[str] = Query(None, description="Filter by reporting user ID"),
+    date_from: Optional[datetime] = Query(None, description="Filter reports from this date (ISO format)"),
+    date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
+):
+    """
+    List all reports with detailed information (Admin only).
+    
+    Returns a paginated list of all individual reports (not aggregated).
+    Each report is shown separately with full details.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        status: Filter by report status
+        product_id: Filter by specific product ID
+        user_id: Filter by reporting user ID
+        date_from: Filter reports from this date
+        date_to: Filter reports to this date
+        
+    Returns:
+        AdminReportListResponse: Paginated list of all reports
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    service = ProductReportService(db)
+    return service.get_all_reports(
+        page=page,
+        page_size=page_size,
+        status_filter=status,
+        product_id=product_id,
+        user_id=user_id,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+
+@router.post("/reports/{report_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_report(
+    report_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Approve a report and deactivate the product (Admin only).
+    
+    When a report is approved:
+    - The report status is set to "approved"
+    - The reported product's is_active is set to False
+    
+    Args:
+        report_id: Report ID to approve
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        Dict[str, str]: Success message
+        
+    Raises:
+        HTTPException: If user is not admin or report not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    service = ProductReportService(db)
+    return service.approve_report(report_id)
+
+
+@router.post("/reports/{report_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_report(
+    report_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Reject a report and delete it (Admin only).
+    
+    When a report is rejected:
+    - The report record is hard deleted from the database
+    - The product remains unchanged
+    
+    Args:
+        report_id: Report ID to reject/delete
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        Dict[str, str]: Success message
+        
+    Raises:
+        HTTPException: If user is not admin or report not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    service = ProductReportService(db)
+    return service.reject_report(report_id)
+
+@router.post("/reports/{report_id}/review", status_code=status.HTTP_200_OK)
+async def review_report(
+    report_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Review a report and live the product again (Admin only).
+    
+    When a report is reviewed:
+    - The product gets live again by setting is_active to True
+    
+    Args:
+        report_id: Report ID to reject/delete
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        Dict[str, str]: Success message
+        
+    Raises:
+        HTTPException: If user is not admin or report not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    service = ProductReportService(db)
+    return service.review_report(report_id)

@@ -778,6 +778,12 @@ class ProductService:
                 detail="Product not found"
             )
         
+        if not product.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not active"
+            )
+        
         seller = self.db.query(User).filter(User.id == product.owner_id).first()
         
         if not seller:
