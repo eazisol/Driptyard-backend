@@ -290,7 +290,7 @@ async def list_admin_products(
     )
 
 
-@router.patch("/products/{product_id}", response_model=AdminProductResponse)
+@router.put("/products/{product_id}", response_model=AdminProductResponse)
 async def update_admin_product(
     product_id: str,
     update_data: AdminProductUpdateRequest,
@@ -298,10 +298,10 @@ async def update_admin_product(
     db: Session = Depends(get_db)
 ):
     """
-    Update product status fields (Admin only).
+    Update product fields (Admin only).
     
-    Allows admins to update product status fields like is_active, is_verified,
-    is_flagged, and stock_status.
+    Allows admins to update product fields including title, price, condition,
+    is_active, is_verified, is_flagged, and stock_status.
     
     Args:
         product_id: Product ID (integer)
@@ -338,6 +338,37 @@ async def update_admin_product(
     # Update fields
     update_dict = update_data.model_dump(exclude_unset=True)
     
+    # Update title if provided
+    if "title" in update_dict:
+        title = update_dict["title"]
+        if title and title.strip():
+            product.title = title.strip()
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Title cannot be empty"
+            )
+    
+    # Update price if provided
+    if "price" in update_dict:
+        price = update_dict["price"]
+        if price is not None:
+            if price < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Price cannot be negative"
+                )
+            product.price = price
+    
+    # Update condition if provided
+    if "condition" in update_dict:
+        condition = update_dict["condition"]
+        if condition:
+            product.condition = condition.strip()
+        else:
+            product.condition = None
+    
+    # Update status fields
     if "is_active" in update_dict:
         product.is_active = update_dict["is_active"]
     

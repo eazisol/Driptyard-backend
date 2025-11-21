@@ -54,8 +54,11 @@ class AdminProductListResponse(BaseModel):
 
 
 class AdminProductUpdateRequest(BaseModel):
-    """Schema for admin product status update."""
+    """Schema for admin product update."""
     
+    title: Optional[str] = Field(None, min_length=1, max_length=255, description="Product title")
+    price: Optional[Decimal] = Field(None, ge=0, description="Product price")
+    condition: Optional[str] = Field(None, max_length=50, description="Product condition")
     is_active: Optional[bool] = Field(None, description="Whether product is active")
     is_verified: Optional[bool] = Field(None, description="Whether product is verified")
     is_flagged: Optional[bool] = Field(None, description="Whether product is flagged")
