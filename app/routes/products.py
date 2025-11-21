@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.security import get_current_user_id
 from app.schemas.product import (
+    ProductCreate,
     ProductUpdate,
     ProductDetailResponse,
     ProductPaginationResponse,
@@ -283,26 +284,17 @@ async def get_product(
 
 @router.post("/", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
-    request: Request,
+    product_data: ProductCreate,
     current_user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
-    Create a new product listing with image uploads.
+    Create a new product listing with S3 image URLs.
     
-    Send as multipart/form-data.
+    Send as application/json. Images should already be uploaded to S3 by the frontend.
     
     Args:
-        title: Product title
-        description: Product description
-        price: Product price
-        category: Product category
-        condition: Product condition
-        dealMethod: Deal method (Meet Up or Delivery)
-        meetupDate: Optional meetup date
-        meetupLocation: Optional meetup location
-        meetupTime: Optional meetup time
-        images: List of product images (minimum 4, maximum 10)
+        product_data: Product creation data including S3 image URLs
         current_user_id: Current authenticated user ID
         db: Database session
         
@@ -313,45 +305,13 @@ async def create_product(
         A verification code is emailed to the seller after creation. The product
         remains inactive until the code is confirmed via the verification endpoint.
     """
-    # Parse form data manually to handle both form fields and files
-    form = await request.form()
-    
-    # Extract form fields into dictionary
-    form_data = {}
-    for key, value in form.items():
-        if key not in ["images"] and not key.startswith("images["):
-            form_data[key] = value
-    
-    # Handle image uploads - parse from multipart form
-    # Frontend may send as 'images', 'images[0]', 'images[1]', etc.
-    files_to_process: List[UploadFile] = []
-    
-    # Debug: Log what we're receiving
-    debug_info = []
-    for key, value in form.multi_items():
-        # Check by type name instead of isinstance since there might be import issues
-        type_name = type(value).__name__
-        is_upload = type_name == "UploadFile" or hasattr(value, 'file')
-        debug_info.append(f"Key: {key}, Type: {type_name}, IsUploadFile: {is_upload}, HasFile: {hasattr(value, 'file')}")
-        
-        # Check if it's a file upload by type name or has file attribute
-        if type_name == "UploadFile" or hasattr(value, 'file'):
-            # Check if field name matches 'images' pattern
-            if key == "images" or key.startswith("images["):
-                # Verify the file has a filename (not an empty upload)
-                if hasattr(value, 'filename') and value.filename:
-                    files_to_process.append(value)
-                    debug_info.append(f"  -> Added: Filename: {value.filename}")
-    
-    # Validate minimum number of images (4 required) - maintain exact error message
-    if len(files_to_process) < 4:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Minimum 4 product images are required. Received {len(files_to_process)} valid image(s). Debug: {debug_info}"
-        )
+    # Convert Pydantic model to dict for service method
+    form_data = product_data.model_dump(exclude={'images'})
+    # Add images separately as they're now URLs
+    image_urls = product_data.images
     
     service = ProductService(db)
-    return service.create_product(current_user_id, form_data, files_to_process)
+    return service.create_product(current_user_id, form_data, image_urls)
 
 
 @router.post("/{product_id}/verification/send", status_code=status.HTTP_200_OK)

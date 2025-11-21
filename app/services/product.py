@@ -13,6 +13,7 @@ import random
 import string
 import json
 import math
+from urllib.parse import urlparse
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func, case
@@ -791,15 +792,15 @@ class ProductService:
         self,
         user_id: str,
         form_data: Dict[str, Any],
-        image_files: List[UploadFile]
+        image_urls: List[str]
     ) -> ProductDetailResponse:
         """
-        Create a new product listing with image uploads.
+        Create a new product listing with S3 image URLs.
         
         Args:
             user_id: Current authenticated user ID
             form_data: Parsed form data dictionary
-            image_files: List of uploaded image files
+            image_urls: List of S3 image URLs
             
         Returns:
             ProductDetailResponse: Created product details
@@ -1144,37 +1145,39 @@ class ProductService:
             )
         
         # Validate minimum number of images (4 required)
-        if len(image_files) < 4:
+        if len(image_urls) < 4:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Minimum 4 product images are required. Received {len(image_files)} valid image(s)."
+                detail=f"Minimum 4 product images are required. Received {len(image_urls)} image URL(s)."
             )
         
-        # Validate and upload images
-        image_urls = []
-        if image_files:
-            if len(image_files) > 10:
+        # Validate maximum number of images (10 allowed)
+        if len(image_urls) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 10 images allowed per product"
+            )
+        
+        # Validate image URLs format
+        for idx, url in enumerate(image_urls):
+            if not url or not isinstance(url, str):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Maximum 10 images allowed per product"
+                    detail=f"Image URL at index {idx} must be a valid string"
                 )
             
-            s3_service = get_s3_service()
-            for img in image_files:
-                if not img.content_type or not img.content_type.startswith('image/'):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"File {img.filename} must be an image"
-                    )
-                
-                try:
-                    result = s3_service.upload_file(img, "product_images", user_id)
-                    image_urls.append(result["url"])
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Failed to upload image {img.filename}: {str(e)}"
-                    )
+            # Validate URL format using urllib.parse
+            try:
+                parsed = urlparse(url)
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValueError("Invalid URL format")
+                if parsed.scheme not in ('http', 'https'):
+                    raise ValueError("URL must use http or https scheme")
+            except (ValueError, Exception) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid image URL format at index {idx}: {url}"
+                )
         
         # Create product
         verification_code = self._generate_verification_code()

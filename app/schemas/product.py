@@ -4,9 +4,10 @@ Product-related Pydantic schemas.
 This module contains all product-related request and response schemas.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from decimal import Decimal
 from datetime import datetime
+import json
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,7 +31,7 @@ class ProductCreate(BaseCreateSchema):
     title: str = Field(..., min_length=1, max_length=255, description="Product title")
     description: Optional[str] = Field(None, description="Product description")
     price: str = Field(..., description="Product price as string")
-    category: Optional[str] = Field(None, max_length=100, description="Product category")
+    category: Optional[str] = Field(None, description="Product category ID (integer or string)")
     condition: Optional[str] = Field(None, description="Product condition")
 
     # Deal method and meetup details
@@ -38,18 +39,18 @@ class ProductCreate(BaseCreateSchema):
     meetupDate: Optional[str] = Field(None, description="Meetup date (YYYY-MM-DD)")
     meetupLocation: Optional[str] = Field(None, max_length=255, description="Meetup location")
     meetupTime: Optional[str] = Field(None, description="Meetup time (HH:MM)")
-    meetupLocations: Optional[str] = Field(None, description="JSON stringified meetup locations")
+    meetupLocations: Optional[str] = Field(None, description="JSON stringified meetup locations or array of location objects")
 
     # Inventory
     stockQuantity: Optional[str] = Field(None, description="Stock quantity as string")
 
     # Product classification
-    gender: Optional[str] = Field(None, description="Target gender for the product")
-    productType: Optional[str] = Field(None, description="Product type based on category")
-    subCategory: Optional[str] = Field(None, description="Product sub-category")
-    brand: Optional[str] = Field(None, description="Product brand")
+    gender: Optional[str] = Field(None, description="Target gender ID for the product (integer or string)")
+    productType: Optional[str] = Field(None, description="Product type ID based on category (integer or string)")
+    subCategory: Optional[str] = Field(None, description="Product sub-category ID (integer or string)")
+    brand: Optional[str] = Field(None, description="Product brand ID (integer or string)")
     size: Optional[str] = Field(None, description="Product size")
-    colors: Optional[str] = Field(None, description="JSON stringified array of colors")
+    colors: Optional[str] = Field(None, description="JSON stringified array of colors or array of color strings")
     productStyle: Optional[str] = Field(None, description="Product style")
 
     # Measurements (stored as strings)
@@ -60,21 +61,69 @@ class ProductCreate(BaseCreateSchema):
     measurementShoulders: Optional[str] = Field(None, description="Shoulder measurement")
 
     # Purchase button configuration
-    purchaseButtonEnabled: Optional[str] = Field(None, description="Whether the buy button is enabled (stringified boolean)")
+    purchaseButtonEnabled: Optional[Union[bool, str]] = Field(None, description="Whether the buy button is enabled (boolean or string)")
 
     # Delivery configuration
     deliveryMethod: Optional[str] = Field(None, description="Delivery method: own or partner")
     deliveryTime: Optional[str] = Field(None, description="Delivery timeframe identifier")
     deliveryFee: Optional[str] = Field(None, description="Delivery fee amount as string")
     deliveryFeeType: Optional[str] = Field(None, description="Delivery fee type: free or custom")
-    trackingProvided: Optional[str] = Field(None, description="Whether tracking is provided (stringified boolean)")
+    trackingProvided: Optional[Union[bool, str]] = Field(None, description="Whether tracking is provided (boolean or string)")
+    
+    @field_validator('purchaseButtonEnabled', 'trackingProvided', mode='before')
+    @classmethod
+    def validate_boolean_fields(cls, v):
+        """Accept both boolean and string values."""
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v
+        raise ValueError("Field must be a boolean or string")
     shippingAddress: Optional[str] = Field(None, description="Seller shipping address for partner delivery")
 
     # Images
-    images: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Product images with metadata")
+    images: List[str] = Field(..., min_length=4, max_length=10, description="List of S3 image URLs (minimum 4, maximum 10)")
 
     # Additional fields for internal use
     currentStep: Optional[int] = Field(None, description="Current step in creation process")
+    
+    @field_validator('colors', mode='before')
+    @classmethod
+    def validate_colors(cls, v):
+        """Convert list to JSON string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return json.dumps(v)
+        if isinstance(v, str):
+            return v
+        raise ValueError("colors must be a string or list")
+    
+    @field_validator('meetupLocations', mode='before')
+    @classmethod
+    def validate_meetup_locations(cls, v):
+        """Convert list to JSON string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return json.dumps(v)
+        if isinstance(v, str):
+            return v
+        raise ValueError("meetupLocations must be a string or list")
+    
+    @field_validator('category', 'gender', 'productType', 'subCategory', 'brand', mode='before')
+    @classmethod
+    def validate_id_fields(cls, v):
+        """Convert integer to string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, str):
+            return v
+        raise ValueError("Field must be an integer or string")
 
 
 class ProductUpdate(BaseUpdateSchema):
