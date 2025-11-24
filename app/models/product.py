@@ -32,12 +32,15 @@ class Product(UserProductBaseModel):
     # Product status
     is_active = Column(Boolean, default=True, nullable=False)
     is_sold = Column(Boolean, default=False, nullable=False)
-    is_featured = Column(Boolean, default=False, nullable=False, index=True)
+    is_spotlighted = Column(Boolean, default=False, nullable=False, index=True)
     is_verified = Column(Boolean, default=False, nullable=False, index=True)
     is_flagged = Column(Boolean, default=False, nullable=False, index=True)
     verification_code = Column(String(6), nullable=True)
     verification_expires_at = Column(DateTime, nullable=True)
     verification_attempts = Column(Integer, default=0, nullable=False)
+    
+    # Spotlight tracking
+    spotlight_end_time = Column(DateTime, nullable=True, index=True)
     
     # Stock management
     stock_quantity = Column(Integer, default=1, nullable=False)

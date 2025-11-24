@@ -179,7 +179,7 @@ class ProductUpdate(BaseUpdateSchema):
     packaging_info: Optional[str] = Field(None, description="Packaging info")
 
     is_active: Optional[bool] = Field(None, description="Whether product is active")
-    is_featured: Optional[bool] = Field(None, description="Whether product is featured")
+    is_spotlighted: Optional[bool] = Field(None, description="Whether product is spotlighted")
 
 
 class ProductVerificationRequest(BaseModel):
@@ -214,6 +214,8 @@ class ProductListResponse(BaseModel):
     purchase_button_enabled: bool = Field(..., description="Whether the buy button is enabled")
     seller: SellerInfo = Field(..., description="Seller information")
     created_at: datetime = Field(..., description="Creation timestamp")
+    is_active: bool = Field(..., description="Whether product is active")
+    is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
 
     class Config:
         from_attributes = True
@@ -280,7 +282,7 @@ class ProductDetailResponse(BaseResponseSchema):
     # Status
     is_active: bool = Field(..., description="Whether product is active")
     is_sold: bool = Field(..., description="Whether product is sold")
-    is_featured: bool = Field(..., description="Whether product is featured")
+    is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
     is_verified: bool = Field(..., description="Whether product has been verified")
 
     # Seller info

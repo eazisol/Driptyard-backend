@@ -39,6 +39,7 @@ from app.schemas.product import (
 )
 from app.services.s3 import get_s3_service
 from app.services.email import email_service
+from app.services.spotlight import SpotlightService
 
 
 class ProductService:
@@ -98,7 +99,9 @@ class ProductService:
             colors=product.colors or [],
             purchase_button_enabled=product.purchase_button_enabled,
             seller=self._get_seller_info(seller),
-            created_at=product.created_at
+            created_at=product.created_at,
+            is_active=product.is_active,
+            is_spotlighted=product.is_spotlighted
         )
     
     def _product_to_detail_response(self, product: Product, seller: User) -> ProductDetailResponse:
@@ -148,7 +151,7 @@ class ProductService:
             images=product.images or [],
             is_active=product.is_active,
             is_sold=product.is_sold,
-            is_featured=product.is_featured,
+            is_spotlighted=product.is_spotlighted,
             is_verified=product.is_verified,
             gender=str(product.gender_id) if product.gender_id else None,
             gender_name=gender_name,
@@ -359,29 +362,57 @@ class ProductService:
             if delivery_conditions:
                 query = query.filter(or_(*delivery_conditions))
         
-        # Sorting logic
+        # Sorting logic with spotlight prioritization
+        # Spotlighted products (is_spotlighted=true AND spotlight_end_time != null) appear first
+        spotlight_case = case(
+            (and_(Product.is_spotlighted == True, Product.spotlight_end_time.isnot(None)), 1),
+            else_=0
+        )
+        
         if sort == "price_low_high":
-            query = query.order_by(Product.price.asc(), Product.created_at.desc())
+            query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
+                Product.price.asc(),
+                Product.created_at.desc()
+            )
         elif sort == "price_high_low":
-            query = query.order_by(Product.price.desc(), Product.created_at.desc())
+            query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
+                Product.price.desc(),
+                Product.created_at.desc()
+            )
         elif sort == "verified":
             # Recently verified products first
             query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
                 Product.is_verified.desc(),
                 Product.created_at.desc()
             )
         elif sort == "popular":
             # Most popular (by rating and review count)
             query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
                 Product.rating.desc(),
                 Product.review_count.desc(),
                 Product.created_at.desc()
             )
         elif sort == "grid_manager":
             # Grid manager sort (similar to newest but may have custom logic)
-            query = query.order_by(Product.created_at.desc())
+            query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
+                Product.created_at.desc()
+            )
         else:  # Default: newest
-            query = query.order_by(Product.created_at.desc())
+            query = query.order_by(
+                spotlight_case.desc(),
+                Product.spotlight_end_time.desc().nullslast(),
+                Product.created_at.desc()
+            )
         
         return query
     
@@ -405,7 +436,10 @@ class ProductService:
         delivery: Optional[List[str]] = None
     ) -> ProductPaginationResponse:
         """
-        Get featured products listing with filtering and sorting.
+        Get spotlighted products listing with filtering and sorting.
+        
+        Note: Method name kept as 'list_featured_products' for backward compatibility,
+        but it returns spotlighted products (is_spotlighted=True).
         
         Args:
             page: Page number (starts from 1)
@@ -428,12 +462,16 @@ class ProductService:
         Returns:
             ProductPaginationResponse: Paginated list of featured products
         """
+        # Check and expire any spotlights that have passed their end time
+        spotlight_service = SpotlightService(self.db)
+        spotlight_service.check_and_expire_spotlights()
+        
         offset = (page - 1) * page_size
         
-        # Base query for featured products
+        # Base query for spotlighted products
         query = self.db.query(Product).filter(
             and_(
-                Product.is_featured == True,
+                Product.is_spotlighted == True,
                 Product.is_active == True,
                 Product.is_sold == False
             )
@@ -522,14 +560,18 @@ class ProductService:
         Returns:
             ProductPaginationResponse: Paginated list of recommended products
         """
+        # Check and expire any spotlights that have passed their end time
+        spotlight_service = SpotlightService(self.db)
+        spotlight_service.check_and_expire_spotlights()
+        
         offset = (page - 1) * page_size
         
-        # Base query for recommended products (excludes featured)
+        # Base query for recommended products (excludes spotlighted)
         query = self.db.query(Product).filter(
             and_(
                 Product.is_active == True,
                 Product.is_sold == False,
-                Product.is_featured == False
+                Product.is_spotlighted == False
             )
         )
         
@@ -699,6 +741,10 @@ class ProductService:
         Returns:
             ProductPaginationResponse: Paginated list of products
         """
+        # Check and expire any spotlights that have passed their end time
+        spotlight_service = SpotlightService(self.db)
+        spotlight_service.check_and_expire_spotlights()
+        
         offset = (page - 1) * page_size
         
         # Base query for all products

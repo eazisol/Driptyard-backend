@@ -29,7 +29,14 @@ from app.schemas.report import (
     ReportedProductListResponse,
     AdminReportListResponse
 )
+from app.schemas.spotlight import (
+    SpotlightApplyRequest,
+    SpotlightResponse,
+    ActiveSpotlightListResponse,
+    SpotlightHistoryListResponse
+)
 from app.services.report import ProductReportService
+from app.services.spotlight import SpotlightService
 
 router = APIRouter()
 
@@ -283,6 +290,7 @@ async def list_admin_products(
             is_flagged=product.is_flagged,
             images=product.images or [],
             owner_id=str(product.owner_id),
+            owner_name=product.owner.username if product.owner else None,
             created_at=product.created_at
         ))
     
@@ -1052,3 +1060,204 @@ async def review_report(
     
     service = ProductReportService(db)
     return service.review_report(report_id)
+
+
+@router.post("/products/{product_id}/spotlight", response_model=SpotlightResponse, status_code=status.HTTP_201_CREATED)
+async def apply_spotlight(
+    product_id: str,
+    request: SpotlightApplyRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Apply spotlight to a product (Admin only).
+    
+    Spotlights a verified product by setting it as featured and prioritizing it
+    in listings. The spotlight will automatically expire after the specified duration.
+    
+    Args:
+        product_id: Product ID to spotlight
+        request: Spotlight request with duration or custom end time
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        SpotlightResponse: Spotlight details
+        
+    Raises:
+        HTTPException: If user is not admin, product not found, or validation fails
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Convert product_id to int
+    try:
+        product_id_int = int(product_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format. Expected integer ID."
+        )
+    
+    # Convert user_id to int
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    # Apply spotlight
+    service = SpotlightService(db)
+    return service.apply_spotlight(
+        product_id=product_id_int,
+        admin_user_id=user_id_int,
+        duration_hours=request.duration_hours,
+        custom_end_time=request.custom_end_time
+    )
+
+
+@router.delete("/products/{product_id}/spotlight", status_code=status.HTTP_200_OK)
+async def remove_spotlight(
+    product_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Remove spotlight from a product (Admin only).
+    
+    Removes the active spotlight from a product, returning it to normal
+    status (is_spotlighted = false).
+    
+    Args:
+        product_id: Product ID to remove spotlight from
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        dict: Success message
+        
+    Raises:
+        HTTPException: If user is not admin or spotlight not found
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Convert product_id to int
+    try:
+        product_id_int = int(product_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format. Expected integer ID."
+        )
+    
+    # Convert user_id to int
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    # Remove spotlight
+    service = SpotlightService(db)
+    return service.remove_spotlight(
+        product_id=product_id_int,
+        admin_user_id=user_id_int
+    )
+
+
+@router.get("/spotlight/active", response_model=ActiveSpotlightListResponse)
+async def get_active_spotlights(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page")
+):
+    """
+    Get all active spotlights (Admin only).
+    
+    Returns a paginated list of currently active spotlighted products,
+    showing when they were applied and when they will expire.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number
+        page_size: Items per page
+        
+    Returns:
+        ActiveSpotlightListResponse: Paginated list of active spotlights
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Get active spotlights
+    service = SpotlightService(db)
+    return service.get_active_spotlights(page=page, page_size=page_size)
+
+
+@router.get("/spotlight/history", response_model=SpotlightHistoryListResponse)
+async def get_spotlight_history(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    product_id: Optional[str] = Query(None, description="Filter by product ID"),
+    status: Optional[str] = Query(None, description="Filter by action (applied, expired, removed)"),
+    date_from: Optional[datetime] = Query(None, description="Filter from date (ISO format)"),
+    date_to: Optional[datetime] = Query(None, description="Filter to date (ISO format)")
+):
+    """
+    Get spotlight history (Admin only).
+    
+    Returns a paginated list of spotlight history entries, including
+    applied, expired, and removed spotlights. Supports filtering by
+    product, action type, and date range.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number
+        page_size: Items per page
+        product_id: Filter by product ID
+        status: Filter by action type
+        date_from: Filter from date
+        date_to: Filter to date
+        
+    Returns:
+        SpotlightHistoryListResponse: Paginated list of history entries
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Convert product_id to int if provided
+    product_id_int = None
+    if product_id:
+        try:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format. Expected integer ID."
+            )
+    
+    # Get spotlight history
+    service = SpotlightService(db)
+    return service.get_spotlight_history(
+        page=page,
+        page_size=page_size,
+        product_id=product_id_int,
+        status=status,
+        date_from=date_from,
+        date_to=date_to
+    )

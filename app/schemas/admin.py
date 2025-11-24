@@ -37,6 +37,7 @@ class AdminProductResponse(BaseModel):
     is_flagged: bool = Field(..., description="Whether product is flagged")
     images: List[str] = Field(default_factory=list, description="Product images")
     owner_id: str = Field(..., description="Owner/seller ID")
+    owner_name: Optional[str] = Field(None, description="Owner/seller username")
     created_at: datetime = Field(..., description="Creation timestamp")
 
 

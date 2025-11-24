@@ -18,14 +18,16 @@ from app.schemas.product import (
     ProductVerificationRequest
 )
 from app.schemas.report import ProductReportRequest, ProductReportResponse
+from app.schemas.spotlight import ProductSpotlightStatusResponse
 from app.services.product import ProductService
 from app.services.report import ProductReportService
+from app.services.spotlight import SpotlightService
 
 router = APIRouter()
 
 
-@router.get("/featured", response_model=ProductPaginationResponse)
-async def get_featured_products(
+@router.get("/spotlighted", response_model=ProductPaginationResponse)
+async def get_spotlighted_products(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(12, ge=1, le=100, description="Items per page"),
     category: Optional[str] = Query(None, description="Filter by category"),
@@ -45,9 +47,10 @@ async def get_featured_products(
     db: Session = Depends(get_db)
 ):
     """
-    Get featured products listing with filtering and sorting.
+    Get spotlighted products listing with filtering and sorting.
     
-    Returns handpicked premium items from verified sellers.
+    Returns admin-promoted products that are prioritized in the feed.
+    Spotlighted products are manually promoted by admins for limited durations.
     
     Args:
         page: Page number (starts from 1)
@@ -69,7 +72,7 @@ async def get_featured_products(
         db: Database session
         
     Returns:
-        ProductPaginationResponse: Paginated list of featured products
+        ProductPaginationResponse: Paginated list of spotlighted products
     """
     service = ProductService(db)
     return service.list_featured_products(
@@ -282,6 +285,42 @@ async def get_product(
     """
     service = ProductService(db)
     return service.get_product(product_id)
+
+
+@router.get("/{product_id}/spotlight", response_model=ProductSpotlightStatusResponse)
+async def get_product_spotlight_status(
+    product_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get spotlight status for a specific product.
+    
+    Returns whether the product is currently spotlighted, and if so,
+    provides all spotlight details including start time, end time,
+    duration, and who applied it.
+    
+    Args:
+        product_id: Product ID (integer)
+        db: Database session
+        
+    Returns:
+        ProductSpotlightStatusResponse: Spotlight status and details
+        
+    Raises:
+        HTTPException: If product not found
+    """
+    # Convert product_id to int
+    try:
+        product_id_int = int(product_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format. Expected integer ID."
+        )
+    
+    # Get spotlight status
+    service = SpotlightService(db)
+    return service.get_product_spotlight_status(product_id_int)
 
 
 @router.post("/{product_id}/report", response_model=ProductReportResponse, status_code=status.HTTP_201_CREATED)

@@ -15,6 +15,7 @@ from app.models.category import MainCategory, CategoryType, SubCategory, Brand, 
 from app.models.product import Product
 from app.models.order import Order
 from app.models.report import ReportStatus, ProductReport
+from app.models.spotlight import Spotlight, SpotlightHistory
 
 target_metadata = Base.metadata
 # this is the Alembic Config object, which provides
