@@ -81,15 +81,13 @@ class SpotlightService:
                 detail="Only verified products can be spotlighted"
             )
         
-        # Check if product is already spotlighted
+        # Check if product has any existing spotlight record
         existing_spotlight = self.db.query(Spotlight).filter(
-            and_(
-                Spotlight.product_id == product_id,
-                Spotlight.status == "active"
-            )
+            Spotlight.product_id == product_id
         ).first()
         
-        if existing_spotlight:
+        # If there's an active spotlight, reject
+        if existing_spotlight and existing_spotlight.status == "active":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product is already spotlighted"
@@ -107,16 +105,27 @@ class SpotlightService:
             duration = duration_hours
             end_time = start_time + timedelta(hours=duration)
         
-        # Create spotlight record
-        spotlight = Spotlight(
-            product_id=product_id,
-            applied_by=admin_user_id,
-            start_time=start_time,
-            end_time=end_time,
-            duration_hours=duration,
-            status="active"
-        )
-        self.db.add(spotlight)
+        # Reuse existing spotlight record if expired/removed, or create new one
+        if existing_spotlight and existing_spotlight.status in ["expired", "removed"]:
+            # Reactivate the existing spotlight with new times
+            spotlight = existing_spotlight
+            spotlight.applied_by = admin_user_id
+            spotlight.start_time = start_time
+            spotlight.end_time = end_time
+            spotlight.duration_hours = duration
+            spotlight.status = "active"
+            spotlight.updated_at = start_time
+        else:
+            # Create new spotlight record
+            spotlight = Spotlight(
+                product_id=product_id,
+                applied_by=admin_user_id,
+                start_time=start_time,
+                end_time=end_time,
+                duration_hours=duration,
+                status="active"
+            )
+            self.db.add(spotlight)
         
         # Update product
         product.is_spotlighted = True
