@@ -37,6 +37,7 @@ class UserService:
             "is_active": user.is_active,
             "is_verified": user.is_verified,
             "is_admin": user.is_admin,
+            "is_moderator": user.is_moderator,
             "first_name": user.first_name,
             "last_name": user.last_name,
             "bio": user.bio,
