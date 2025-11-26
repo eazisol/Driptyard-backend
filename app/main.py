@@ -21,6 +21,7 @@ from app.routes.users import router as users_router
 from app.routes.products import router as products_router
 from app.routes.admin import router as admin_router
 from app.routes.categories import router as categories_router
+from app.routes.moderators import router as moderators_router
 
 
 def create_app() -> FastAPI:
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(products_router, prefix="/products", tags=["Products"])
     app.include_router(admin_router, prefix="/admin", tags=["Admin"])
     app.include_router(categories_router, prefix="/categories", tags=["Categories & Brands"])
+    app.include_router(moderators_router, prefix="/moderators", tags=["Moderators"])
     # TODO: Add orders router when order management is implemented
     
     # Add custom exception handler for HTTP exceptions

@@ -12,10 +12,11 @@ from app.database import get_db
 from app.services.auth import AuthService
 from app.security import get_current_user_id, verify_password, create_token_response, get_password_hash
 from app.models.user import User, PasswordResetToken
+from app.models.moderator import ModeratorPermission
 from app.schemas.auth import UserLogin
 from app.schemas.auth import (
     UserRegister, EmailVerificationRequest, RegistrationResponse, TokenResponse, ResendVerificationRequest,
-    PasswordResetRequest, PasswordResetVerify, PasswordResetResponse
+    PasswordResetRequest, PasswordResetVerify, PasswordResetResponse, UserPermissionsResponse
 )
 from app.services.email import email_service
 import secrets
@@ -90,6 +91,42 @@ async def login(
     # Generate JWT token
     token_response = create_token_response(str(user.id))
     
+    # Get permissions
+    permissions = None
+    if user.is_admin:
+        # Admin has all permissions
+        permissions = UserPermissionsResponse(
+            can_see_dashboard=True,
+            can_see_users=True,
+            can_manage_users=True,
+            can_see_listings=True,
+            can_manage_listings=True,
+            can_see_spotlight_history=True,
+            can_spotlight=True,
+            can_remove_spotlight=True,
+            can_see_flagged_content=True,
+            can_manage_flagged_content=True
+        )
+    elif user.is_moderator:
+        # Get moderator permissions from database
+        moderator_permissions = db.query(ModeratorPermission).filter(
+            ModeratorPermission.user_id == user.id
+        ).first()
+        
+        if moderator_permissions:
+            permissions = UserPermissionsResponse(
+                can_see_dashboard=moderator_permissions.can_see_dashboard,
+                can_see_users=moderator_permissions.can_see_users,
+                can_manage_users=moderator_permissions.can_manage_users,
+                can_see_listings=moderator_permissions.can_see_listings,
+                can_manage_listings=moderator_permissions.can_manage_listings,
+                can_see_spotlight_history=moderator_permissions.can_see_spotlight_history,
+                can_spotlight=moderator_permissions.can_spotlight,
+                can_remove_spotlight=moderator_permissions.can_remove_spotlight,
+                can_see_flagged_content=moderator_permissions.can_see_flagged_content,
+                can_manage_flagged_content=moderator_permissions.can_manage_flagged_content
+            )
+    
     # Create user response
     user_response = {
         "id": str(user.id),  # Convert integer ID to string for schema validation
@@ -107,14 +144,16 @@ async def login(
         "company_name": user.company_name,
         "sin_number": user.sin_number,
         "created_at": user.created_at,
-        "updated_at": user.updated_at
+        "updated_at": user.updated_at,
+        "is_moderator": user.is_moderator
     }
     
     return {
         "access_token": token_response["access_token"],
         "token_type": token_response["token_type"],
         "expires_in": token_response["expires_in"],
-        "user": user_response
+        "user": user_response,
+        "permissions": permissions.model_dump() if permissions else None
     }
 
 

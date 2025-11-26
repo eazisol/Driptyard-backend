@@ -14,6 +14,9 @@ from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import settings
+from sqlalchemy.orm import Session
+from app.models.user import User
+from app.models.moderator import ModeratorPermission
 
 # Password hashing context
 pwd_context = CryptContext(
@@ -177,3 +180,92 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user_id
+
+
+def check_spotlight_permission(user: User, db: Session) -> bool:
+    """
+    Check if user can apply spotlight.
+    
+    Args:
+        user: User object
+        db: Database session
+        
+    Returns:
+        bool: True if user can apply spotlight, False otherwise
+    """
+    # Admin always has permission
+    if user.is_admin:
+        return True
+    
+    # Check moderator permission
+    if user.is_moderator:
+        permissions = db.query(ModeratorPermission).filter(
+            ModeratorPermission.user_id == user.id
+        ).first()
+        if permissions and permissions.can_spotlight:
+            return True
+    
+    return False
+
+
+def check_remove_spotlight_permission(user: User, db: Session) -> bool:
+    """
+    Check if user can remove spotlight.
+    
+    Args:
+        user: User object
+        db: Database session
+        
+    Returns:
+        bool: True if user can remove spotlight, False otherwise
+    """
+    # Admin always has permission
+    if user.is_admin:
+        return True
+    
+    # Check moderator permission
+    if user.is_moderator:
+        permissions = db.query(ModeratorPermission).filter(
+            ModeratorPermission.user_id == user.id
+        ).first()
+        if permissions and permissions.can_remove_spotlight:
+            return True
+    
+    return False
+
+
+def verify_admin_or_moderator_with_permission(
+    user: User,
+    permission_type: str,
+    db: Session
+) -> User:
+    """
+    Verify that user is admin or moderator with required permission.
+    
+    Args:
+        user: User object
+        permission_type: Type of permission ('spotlight' or 'remove_spotlight')
+        db: Database session
+        
+    Returns:
+        User: The verified user object
+        
+    Raises:
+        HTTPException: If user doesn't have required permission
+    """
+    if permission_type == "spotlight":
+        if not check_spotlight_permission(user, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to apply spotlight"
+            )
+    elif permission_type == "remove_spotlight":
+        if not check_remove_spotlight_permission(user, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to remove spotlight"
+            )
+    else:
+        raise ValueError(f"Unknown permission type: {permission_type}")
+    
+    return user

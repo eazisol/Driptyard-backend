@@ -29,6 +29,7 @@ class User(UserProductBaseModel):
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
+    is_moderator = Column(Boolean, default=False, nullable=False)
     
     # Profile information
     first_name = Column(String(100), nullable=True)

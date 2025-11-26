@@ -16,6 +16,7 @@ from app.security import get_current_user_id
 from app.models.user import User
 from app.models.product import Product
 from app.models.category import MainCategory
+from app.models.moderator import ModeratorPermission
 from app.schemas.admin import (
     StatsOverviewResponse,
     AdminProductResponse,
@@ -80,6 +81,55 @@ def verify_admin_access(current_user_id: str, db: Session) -> User:
     return user
 
 
+def verify_admin_or_moderator_with_dashboard_permission(current_user_id: str, db: Session) -> User:
+    """
+    Verify that the current user is an admin or moderator with can_see_dashboard permission.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        User: The user object
+        
+    Raises:
+        HTTPException: If user is not found or doesn't have permission
+    """
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Admin always has access
+    if user.is_admin:
+        return user
+    
+    # Check moderator permission
+    if user.is_moderator:
+        permissions = db.query(ModeratorPermission).filter(
+            ModeratorPermission.user_id == user_id_int
+        ).first()
+        
+        if permissions and permissions.can_see_dashboard:
+            return user
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to access the dashboard"
+    )
+
+
 def calculate_percentage_change(current: float, previous: float) -> float:
     """
     Calculate percentage change between two values.
@@ -115,10 +165,10 @@ async def get_stats_overview(
         StatsOverviewResponse: Overview statistics
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have dashboard access permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with dashboard permission
+    verify_admin_or_moderator_with_dashboard_permission(current_user_id, db)
     
     # Get current date and calculate previous period (last month)
     now = datetime.utcnow()
@@ -1070,7 +1120,7 @@ async def apply_spotlight(
     db: Session = Depends(get_db)
 ):
     """
-    Apply spotlight to a product (Admin only).
+    Apply spotlight to a product (Admin or Moderator with permission).
     
     Spotlights a verified product by setting it as featured and prioritizing it
     in listings. The spotlight will automatically expire after the specified duration.
@@ -1085,10 +1135,30 @@ async def apply_spotlight(
         SpotlightResponse: Spotlight details
         
     Raises:
-        HTTPException: If user is not admin, product not found, or validation fails
+        HTTPException: If user doesn't have permission, product not found, or validation fails
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Get user to verify they exist (permission check happens in service)
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if user is admin or moderator
+    if not user.is_admin and not user.is_moderator:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or moderator access required"
+        )
     
     # Convert product_id to int
     try:
@@ -1099,16 +1169,7 @@ async def apply_spotlight(
             detail="Invalid product ID format. Expected integer ID."
         )
     
-    # Convert user_id to int
-    try:
-        user_id_int = int(current_user_id)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user identifier. Expected integer ID."
-        )
-    
-    # Apply spotlight
+    # Apply spotlight (service will check specific permissions)
     service = SpotlightService(db)
     return service.apply_spotlight(
         product_id=product_id_int,
@@ -1125,7 +1186,7 @@ async def remove_spotlight(
     db: Session = Depends(get_db)
 ):
     """
-    Remove spotlight from a product (Admin only).
+    Remove spotlight from a product (Admin or Moderator with permission).
     
     Removes the active spotlight from a product, returning it to normal
     status (is_spotlighted = false).
@@ -1139,10 +1200,30 @@ async def remove_spotlight(
         dict: Success message
         
     Raises:
-        HTTPException: If user is not admin or spotlight not found
+        HTTPException: If user doesn't have permission or spotlight not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Get user to verify they exist (permission check happens in service)
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if user is admin or moderator
+    if not user.is_admin and not user.is_moderator:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or moderator access required"
+        )
     
     # Convert product_id to int
     try:
@@ -1153,16 +1234,7 @@ async def remove_spotlight(
             detail="Invalid product ID format. Expected integer ID."
         )
     
-    # Convert user_id to int
-    try:
-        user_id_int = int(current_user_id)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid user identifier. Expected integer ID."
-        )
-    
-    # Remove spotlight
+    # Remove spotlight (service will check specific permissions)
     service = SpotlightService(db)
     return service.remove_spotlight(
         product_id=product_id_int,

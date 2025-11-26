@@ -15,6 +15,7 @@ from sqlalchemy import and_, or_
 from app.models.spotlight import Spotlight, SpotlightHistory
 from app.models.product import Product
 from app.models.user import User
+from app.security import check_spotlight_permission, check_remove_spotlight_permission
 from app.schemas.spotlight import (
     SpotlightResponse,
     ActiveSpotlightResponse,
@@ -49,7 +50,7 @@ class SpotlightService:
         
         Args:
             product_id: Product ID to spotlight
-            admin_user_id: Admin user ID applying the spotlight
+            admin_user_id: Admin or moderator user ID applying the spotlight
             duration_hours: Duration in hours (24, 72, or 168)
             custom_end_time: Custom end time (overrides duration_hours)
             
@@ -57,8 +58,22 @@ class SpotlightService:
             SpotlightResponse: Spotlight details
             
         Raises:
-            HTTPException: If validation fails
+            HTTPException: If validation fails or user doesn't have permission
         """
+        # Check permissions
+        user = self.db.query(User).filter(User.id == admin_user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not check_spotlight_permission(user, self.db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to apply spotlight"
+            )
+        
         # Validate input
         if custom_end_time is None and duration_hours is None:
             raise HTTPException(
@@ -177,14 +192,28 @@ class SpotlightService:
         
         Args:
             product_id: Product ID to remove spotlight from
-            admin_user_id: Admin user ID removing the spotlight
+            admin_user_id: Admin or moderator user ID removing the spotlight
             
         Returns:
             dict: Success message
             
         Raises:
-            HTTPException: If validation fails
+            HTTPException: If validation fails or user doesn't have permission
         """
+        # Check permissions
+        user = self.db.query(User).filter(User.id == admin_user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not check_remove_spotlight_permission(user, self.db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to remove spotlight"
+            )
+        
         # Get active spotlight
         spotlight = self.db.query(Spotlight).filter(
             and_(

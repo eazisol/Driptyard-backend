@@ -7,6 +7,7 @@ This module contains all authentication-related request and response schemas.
 import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from typing import Optional
 from app.schemas.base import BaseCreateSchema
 from app.schemas.user import UserResponse
 
@@ -96,6 +97,21 @@ class RegistrationResponse(BaseModel):
     expires_in: int = Field(..., description="Verification code expiry time in seconds")
 
 
+class UserPermissionsResponse(BaseModel):
+    """Schema for user permissions in login response."""
+    
+    can_see_dashboard: bool = Field(..., description="Whether user can see dashboard")
+    can_see_users: bool = Field(..., description="Whether user can see users")
+    can_manage_users: bool = Field(..., description="Whether user can manage users")
+    can_see_listings: bool = Field(..., description="Whether user can see listings")
+    can_manage_listings: bool = Field(..., description="Whether user can manage listings")
+    can_see_spotlight_history: bool = Field(..., description="Whether user can see spotlight history")
+    can_spotlight: bool = Field(..., description="Whether user can apply spotlight")
+    can_remove_spotlight: bool = Field(..., description="Whether user can remove spotlight")
+    can_see_flagged_content: bool = Field(..., description="Whether user can see flagged content")
+    can_manage_flagged_content: bool = Field(..., description="Whether user can manage flagged content")
+
+
 class TokenResponse(BaseModel):
     """Schema for authentication token response."""
     
@@ -103,6 +119,7 @@ class TokenResponse(BaseModel):
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration time in seconds")
     user: UserResponse = Field(..., description="User information")
+    permissions: Optional[UserPermissionsResponse] = Field(None, description="User permissions (for admins and moderators)")
 
 
 class PasswordResetRequest(BaseCreateSchema):

@@ -81,6 +81,7 @@ class UserResponse(BaseResponseSchema):
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
     is_admin: bool = Field(..., description="Whether user is an admin")
+    is_moderator: bool = Field(..., description="Whether user is a moderator")
 
 
 class UserPublicResponse(BaseResponseSchema):
