@@ -81,19 +81,19 @@ def verify_admin_access(current_user_id: str, db: Session) -> User:
     return user
 
 
-def verify_admin_or_moderator_with_dashboard_permission(current_user_id: str, db: Session) -> User:
+def _get_user_and_permissions(current_user_id: str, db: Session) -> tuple[User, ModeratorPermission | None]:
     """
-    Verify that the current user is an admin or moderator with can_see_dashboard permission.
+    Get user and their permissions.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         
     Returns:
-        User: The user object
+        tuple: (User object, ModeratorPermission object or None)
         
     Raises:
-        HTTPException: If user is not found or doesn't have permission
+        HTTPException: If user is not found
     """
     try:
         user_id_int = int(current_user_id)
@@ -111,22 +111,170 @@ def verify_admin_or_moderator_with_dashboard_permission(current_user_id: str, db
             detail="User not found"
         )
     
-    # Admin always has access
-    if user.is_admin:
-        return user
-    
-    # Check moderator permission
+    permissions = None
     if user.is_moderator:
         permissions = db.query(ModeratorPermission).filter(
             ModeratorPermission.user_id == user_id_int
         ).first()
-        
-        if permissions and permissions.can_see_dashboard:
-            return user
+    
+    return user, permissions
+
+
+def verify_admin_or_moderator_with_dashboard_permission(current_user_id: str, db: Session) -> User:
+    """Verify that the current user is an admin or moderator with can_see_dashboard permission."""
+    user, permissions = _get_user_and_permissions(current_user_id, db)
+    
+    if user.is_admin:
+        return user
+    
+    if user.is_moderator and permissions and permissions.can_see_dashboard:
+        return user
     
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You do not have permission to access the dashboard"
+    )
+
+
+def verify_admin_or_moderator_with_users_permission(current_user_id: str, db: Session, require_manage: bool = False) -> User:
+    """
+    Verify that the current user is an admin or moderator with users permission.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        require_manage: If True, requires can_manage_users; if False, requires can_see_users
+        
+    Returns:
+        User: The user object
+        
+    Raises:
+        HTTPException: If user doesn't have permission
+    """
+    user, permissions = _get_user_and_permissions(current_user_id, db)
+    
+    if user.is_admin:
+        return user
+    
+    if user.is_moderator and permissions:
+        if require_manage:
+            if permissions.can_manage_users:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to manage users"
+            )
+        else:
+            if permissions.can_see_users:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view users"
+            )
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to access users"
+    )
+
+
+def verify_admin_or_moderator_with_listings_permission(current_user_id: str, db: Session, require_manage: bool = False) -> User:
+    """
+    Verify that the current user is an admin or moderator with listings permission.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        require_manage: If True, requires can_manage_listings; if False, requires can_see_listings
+        
+    Returns:
+        User: The user object
+        
+    Raises:
+        HTTPException: If user doesn't have permission
+    """
+    user, permissions = _get_user_and_permissions(current_user_id, db)
+    
+    if user.is_admin:
+        return user
+    
+    if user.is_moderator and permissions:
+        if require_manage:
+            if permissions.can_manage_listings:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to manage listings"
+            )
+        else:
+            if permissions.can_see_listings:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view listings"
+            )
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to access listings"
+    )
+
+
+def verify_admin_or_moderator_with_spotlight_history_permission(current_user_id: str, db: Session) -> User:
+    """Verify that the current user is an admin or moderator with can_see_spotlight_history permission."""
+    user, permissions = _get_user_and_permissions(current_user_id, db)
+    
+    if user.is_admin:
+        return user
+    
+    if user.is_moderator and permissions and permissions.can_see_spotlight_history:
+        return user
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to view spotlight history"
+    )
+
+
+def verify_admin_or_moderator_with_flagged_content_permission(current_user_id: str, db: Session, require_manage: bool = False) -> User:
+    """
+    Verify that the current user is an admin or moderator with flagged content permission.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        require_manage: If True, requires can_manage_flagged_content; if False, requires can_see_flagged_content
+        
+    Returns:
+        User: The user object
+        
+    Raises:
+        HTTPException: If user doesn't have permission
+    """
+    user, permissions = _get_user_and_permissions(current_user_id, db)
+    
+    if user.is_admin:
+        return user
+    
+    if user.is_moderator and permissions:
+        if require_manage:
+            if permissions.can_manage_flagged_content:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to manage flagged content"
+            )
+        else:
+            if permissions.can_see_flagged_content:
+                return user
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view flagged content"
+            )
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to access flagged content"
     )
 
 
@@ -255,7 +403,7 @@ async def list_admin_products(
     stock_status: Optional[str] = Query(None, description="Filter by stock status")
 ):
     """
-    List all products with filtering and pagination (Admin only).
+    List all products with filtering and pagination (Admin or Moderator with can_see_listings permission).
     
     Returns a paginated list of products with various filter options.
     
@@ -276,10 +424,10 @@ async def list_admin_products(
         AdminProductListResponse: Paginated list of products
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with listings permission
+    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=False)
     
     # Build query
     query = db.query(Product)
@@ -361,9 +509,9 @@ async def update_admin_product(
     db: Session = Depends(get_db)
 ):
     """
-    Update product fields (Admin only).
+    Update product fields (Admin or Moderator with can_manage_listings permission).
     
-    Allows admins to update product fields including title, price, condition,
+    Allows admins/moderators to update product fields including title, price, condition,
     is_active, is_verified, is_flagged, and stock_status.
     
     Args:
@@ -376,10 +524,10 @@ async def update_admin_product(
         AdminProductResponse: Updated product
         
     Raises:
-        HTTPException: If user is not admin or product not found
+        HTTPException: If user doesn't have permission or product not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage listings permission
+    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
     
     # Get product
     try:
@@ -482,7 +630,7 @@ async def delete_admin_product(
     db: Session = Depends(get_db)
 ):
     """
-    Delete a product (Admin only).
+    Delete a product (Admin or Moderator with can_manage_listings permission).
     
     Permanently deletes a product from the database.
     
@@ -492,10 +640,10 @@ async def delete_admin_product(
         db: Database session
         
     Raises:
-        HTTPException: If user is not admin or product not found
+        HTTPException: If user doesn't have permission or product not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage listings permission
+    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
     
     # Get product
     try:
@@ -532,7 +680,7 @@ async def list_admin_users(
     is_verified: Optional[bool] = Query(None, description="Filter by verified status")
 ):
     """
-    List all users with filtering and pagination (Admin only).
+    List all users with filtering and pagination (Admin or Moderator with can_see_users permission).
     
     Returns a paginated list of users with various filter options.
     
@@ -549,10 +697,10 @@ async def list_admin_users(
         AdminUserListResponse: Paginated list of users
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=False)
     
     # Build query
     query = db.query(User)
@@ -626,9 +774,9 @@ async def update_admin_user(
     db: Session = Depends(get_db)
 ):
     """
-    Update user full profile (Admin only).
+    Update user full profile (Admin or Moderator with can_manage_users permission).
     
-    Allows admins to update any user profile fields including email, username,
+    Allows admins/moderators to update any user profile fields including email, username,
     personal information, and status fields.
     
     Args:
@@ -641,10 +789,10 @@ async def update_admin_user(
         AdminUserResponse: Updated user
         
     Raises:
-        HTTPException: If user is not admin, user not found, or validation fails
+        HTTPException: If user doesn't have permission, user not found, or validation fails
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
     
     # Get user
     try:
@@ -742,7 +890,7 @@ async def ban_admin_user(
     db: Session = Depends(get_db)
 ):
     """
-    Ban a user (Admin only).
+    Ban a user (Admin or Moderator with can_manage_users permission).
     
     Sets user's is_active to False (bans the user).
     
@@ -755,10 +903,10 @@ async def ban_admin_user(
         AdminUserResponse: Updated user
         
     Raises:
-        HTTPException: If user is not admin or user not found
+        HTTPException: If user doesn't have permission or user not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
     
     # Get user
     try:
@@ -812,7 +960,7 @@ async def unban_admin_user(
     db: Session = Depends(get_db)
 ):
     """
-    Unban a user (Admin only).
+    Unban a user (Admin or Moderator with can_manage_users permission).
     
     Sets user's is_active to True (unbans the user).
     
@@ -825,10 +973,10 @@ async def unban_admin_user(
         AdminUserResponse: Updated user
         
     Raises:
-        HTTPException: If user is not admin or user not found
+        HTTPException: If user doesn't have permission or user not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
     
     # Get user
     try:
@@ -875,7 +1023,7 @@ async def delete_admin_user(
     db: Session = Depends(get_db)
 ):
     """
-    Delete a user (Admin only).
+    Delete a user (Admin or Moderator with can_manage_users permission).
     
     Permanently deletes a user from the database.
     
@@ -885,10 +1033,10 @@ async def delete_admin_user(
         db: Database session
         
     Raises:
-        HTTPException: If user is not admin or user not found
+        HTTPException: If user doesn't have permission or user not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
     
     # Get user
     try:
@@ -934,7 +1082,7 @@ async def list_reported_products(
     date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
 ):
     """
-    List reported products with aggregation (Admin only).
+    List reported products with aggregation (Admin or Moderator with can_see_flagged_content permission).
     
     Returns a paginated list of products that have been reported, grouped by product.
     Each product appears once with a count of total reports.
@@ -954,10 +1102,10 @@ async def list_reported_products(
         ReportedProductListResponse: Paginated list of reported products
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with flagged content permission
+    verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=False)
     
     service = ProductReportService(db)
     return service.get_reported_products(
@@ -984,7 +1132,7 @@ async def list_all_reports(
     date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
 ):
     """
-    List all reports with detailed information (Admin only).
+    List all reports with detailed information (Admin or Moderator with can_see_flagged_content permission).
     
     Returns a paginated list of all individual reports (not aggregated).
     Each report is shown separately with full details.
@@ -1004,10 +1152,10 @@ async def list_all_reports(
         AdminReportListResponse: Paginated list of all reports
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with flagged content permission
+    verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=False)
     
     service = ProductReportService(db)
     return service.get_all_reports(
@@ -1028,7 +1176,7 @@ async def approve_report(
     db: Session = Depends(get_db)
 ):
     """
-    Approve a report and deactivate the product (Admin only).
+    Approve a report and deactivate the product (Admin or Moderator with can_manage_flagged_content permission).
     
     When a report is approved:
     - The report status is set to "approved"
@@ -1043,10 +1191,10 @@ async def approve_report(
         Dict[str, str]: Success message
         
     Raises:
-        HTTPException: If user is not admin or report not found
+        HTTPException: If user doesn't have permission or report not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage flagged content permission
+    verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
     service = ProductReportService(db)
     return service.approve_report(report_id)
@@ -1059,7 +1207,7 @@ async def reject_report(
     db: Session = Depends(get_db)
 ):
     """
-    Reject a report and delete it (Admin only).
+    Reject a report and delete it (Admin or Moderator with can_manage_flagged_content permission).
     
     When a report is rejected:
     - The report record is hard deleted from the database
@@ -1074,10 +1222,10 @@ async def reject_report(
         Dict[str, str]: Success message
         
     Raises:
-        HTTPException: If user is not admin or report not found
+        HTTPException: If user doesn't have permission or report not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage flagged content permission
+    verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
     service = ProductReportService(db)
     return service.reject_report(report_id)
@@ -1089,7 +1237,7 @@ async def review_report(
     db: Session = Depends(get_db)
 ):
     """
-    Review a report and live the product again (Admin only).
+    Review a report and live the product again (Admin or Moderator with can_manage_flagged_content permission).
     
     When a report is reviewed:
     - The product gets live again by setting is_active to True
@@ -1103,10 +1251,10 @@ async def review_report(
         Dict[str, str]: Success message
         
     Raises:
-        HTTPException: If user is not admin or report not found
+        HTTPException: If user doesn't have permission or report not found
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with manage flagged content permission
+    verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
     service = ProductReportService(db)
     return service.review_report(report_id)
@@ -1250,7 +1398,7 @@ async def get_active_spotlights(
     page_size: int = Query(10, ge=1, le=100, description="Items per page")
 ):
     """
-    Get all active spotlights (Admin only).
+    Get all active spotlights (Admin or Moderator with can_see_spotlight_history permission).
     
     Returns a paginated list of currently active spotlighted products,
     showing when they were applied and when they will expire.
@@ -1265,10 +1413,10 @@ async def get_active_spotlights(
         ActiveSpotlightListResponse: Paginated list of active spotlights
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with spotlight history permission
+    verify_admin_or_moderator_with_spotlight_history_permission(current_user_id, db)
     
     # Get active spotlights
     service = SpotlightService(db)
@@ -1287,7 +1435,7 @@ async def get_spotlight_history(
     date_to: Optional[datetime] = Query(None, description="Filter to date (ISO format)")
 ):
     """
-    Get spotlight history (Admin only).
+    Get spotlight history (Admin or Moderator with can_see_spotlight_history permission).
     
     Returns a paginated list of spotlight history entries, including
     applied, expired, and removed spotlights. Supports filtering by
@@ -1307,10 +1455,10 @@ async def get_spotlight_history(
         SpotlightHistoryListResponse: Paginated list of history entries
         
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user doesn't have permission
     """
-    # Verify admin access
-    verify_admin_access(current_user_id, db)
+    # Verify admin or moderator with spotlight history permission
+    verify_admin_or_moderator_with_spotlight_history_permission(current_user_id, db)
     
     # Convert product_id to int if provided
     product_id_int = None
