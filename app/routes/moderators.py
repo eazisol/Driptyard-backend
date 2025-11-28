@@ -6,6 +6,7 @@ This module contains admin-only endpoints for managing moderators and their perm
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import Optional
 
 from app.database import get_db
@@ -29,18 +30,26 @@ async def get_all_moderators(
     current_user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(10, ge=1, le=100, description="Items per page")
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by email, username, first name, or last name"),
+    status: Optional[str] = Query(None, description="Filter by status: 'active' or 'inactive'"),
+    is_verified: Optional[bool] = Query(None, description="Filter by verified status")
 ):
     """
-    Get all moderators with pagination (Admin only).
+    Get all moderators with pagination, search, and filtering (Admin only).
     
     Returns a paginated list of all moderators with their permissions.
+    Supports searching by email, username, first name, or last name.
+    Supports filtering by active status and verification status.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         page: Page number (starts from 1)
         page_size: Number of items per page
+        search: Search term for email, username, first name, or last name
+        status: Filter by status ('active' maps to is_active=True, 'inactive' maps to is_active=False)
+        is_verified: Filter by verified status
         
     Returns:
         ModeratorListResponse: Paginated list of moderators
@@ -51,9 +60,15 @@ async def get_all_moderators(
     # Verify admin access
     verify_admin_access(current_user_id, db)
     
-    # Get all moderators
+    # Get all moderators with search and filters
     service = ModeratorService(db)
-    return service.get_all_moderators(page=page, page_size=page_size)
+    return service.get_all_moderators(
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        is_verified=is_verified
+    )
 
 
 @router.get("/{user_id}", response_model=ModeratorResponse)

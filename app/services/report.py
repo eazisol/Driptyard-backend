@@ -146,6 +146,7 @@ class ProductReportService:
         self,
         page: int,
         page_size: int,
+        search: Optional[str] = None,
         status_filter: Optional[str] = None,
         product_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -153,11 +154,12 @@ class ProductReportService:
         date_to: Optional[datetime] = None
     ) -> ReportedProductListResponse:
         """
-        Get reported products listing (aggregated by product) with pagination and filters.
+        Get reported products listing (aggregated by product) with pagination, search, and filters.
         
         Args:
             page: Page number (starts from 1)
             page_size: Number of items per page
+            search: Search term for product title or report reason
             status_filter: Filter by report status
             product_id: Filter by specific product ID
             user_id: Filter by reporting user ID
@@ -169,6 +171,33 @@ class ProductReportService:
         """
         offset = (page - 1) * page_size
         
+        # If search is provided, first get matching product IDs
+        matching_product_ids = None
+        if search:
+            search_term = f"%{search}%"
+            # Find product IDs that match search in title or reports that match search in reason
+            # Join reports with products to search both title and reason
+            matching_product_ids_query = self.db.query(ProductReport.product_id).join(
+                Product, ProductReport.product_id == Product.id
+            ).filter(
+                or_(
+                    Product.title.ilike(search_term),
+                    ProductReport.reason.ilike(search_term)
+                )
+            ).distinct()
+            
+            matching_product_ids = [row[0] for row in matching_product_ids_query.all()]
+            
+            # If no matches, return empty result
+            if not matching_product_ids:
+                return ReportedProductListResponse(
+                    reports=[],
+                    total=0,
+                    page=page,
+                    page_size=page_size,
+                    total_pages=0
+                )
+        
         # Base query: group by product_id and get counts
         first_reported_at = func.min(ProductReport.created_at).label('first_reported_at')
         query = self.db.query(
@@ -177,6 +206,10 @@ class ProductReportService:
             func.max(ProductReport.id).label('latest_report_id'),
             first_reported_at
         ).group_by(ProductReport.product_id)
+        
+        # Apply search filter by product IDs
+        if matching_product_ids:
+            query = query.filter(ProductReport.product_id.in_(matching_product_ids))
         
         # Apply filters
         if status_filter:
@@ -265,6 +298,7 @@ class ProductReportService:
         self,
         page: int,
         page_size: int,
+        search: Optional[str] = None,
         status_filter: Optional[str] = None,
         product_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -272,11 +306,12 @@ class ProductReportService:
         date_to: Optional[datetime] = None
     ) -> AdminReportListResponse:
         """
-        Get all reports with pagination and filters (detailed admin view).
+        Get all reports with pagination, search, and filters (detailed admin view).
         
         Args:
             page: Page number (starts from 1)
             page_size: Number of items per page
+            search: Search term for product title or report reason
             status_filter: Filter by report status
             product_id: Filter by specific product ID
             user_id: Filter by reporting user ID
@@ -288,8 +323,18 @@ class ProductReportService:
         """
         offset = (page - 1) * page_size
         
-        # Base query
+        # Base query - join with Product for search
         query = self.db.query(ProductReport)
+        
+        # Apply search filter
+        if search:
+            search_term = f"%{search}%"
+            query = query.join(Product, ProductReport.product_id == Product.id).filter(
+                or_(
+                    Product.title.ilike(search_term),
+                    ProductReport.reason.ilike(search_term)
+                )
+            )
         
         # Apply filters
         if status_filter:

@@ -126,6 +126,20 @@ async def login(
                 can_see_flagged_content=moderator_permissions.can_see_flagged_content,
                 can_manage_flagged_content=moderator_permissions.can_manage_flagged_content
             )
+        else:
+            # If no permissions record exists, return all False
+            permissions = UserPermissionsResponse(
+                can_see_dashboard=False,
+                can_see_users=False,
+                can_manage_users=False,
+                can_see_listings=False,
+                can_manage_listings=False,
+                can_see_spotlight_history=False,
+                can_spotlight=False,
+                can_remove_spotlight=False,
+                can_see_flagged_content=False,
+                can_manage_flagged_content=False
+            )
     
     # Create user response
     user_response = {

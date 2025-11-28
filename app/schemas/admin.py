@@ -4,10 +4,13 @@ Admin-related Pydantic schemas.
 This module contains admin-related request and response schemas.
 """
 
+import re
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
+
+from app.schemas.base import BaseCreateSchema
 
 
 class StatsOverviewResponse(BaseModel):
@@ -121,4 +124,92 @@ class AdminUserUpdateRequest(BaseModel):
         if not v.replace('_', '').replace('-', '').isalnum():
             raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
         return v.lower()
+
+
+class AdminUserCreateRequest(BaseCreateSchema):
+    """Schema for creating a user/moderator/admin (admin only)."""
+    
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., min_length=8, max_length=100, description="User password")
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    phone: str = Field(..., description="Phone number with country code")
+    country_code: str = Field(..., min_length=2, max_length=3, description="Country code")
+    company_name: str | None = Field(None, max_length=200, description="Company name (optional)")
+    sin_number: str | None = Field(None, max_length=20, description="Social Insurance Number (optional)")
+    is_admin: bool = Field(False, description="Set to true to create an admin user (stored in DB)")
+    is_moderator: bool = Field(False, description="Set to true to create a moderator user (stored in DB)")
+    is_customer: bool = Field(True, description="Set to true to create a regular customer user (NOT stored in DB - sets both is_admin and is_moderator to False)")
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format."""
+        if not re.match(r'^[a-zA-Z0-9_-]+$', v):
+            raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
+        if v.startswith(('_', '-')) or v.endswith(('_', '-')):
+            raise ValueError('Username cannot start or end with underscore or hyphen')
+        return v.lower()
+    
+    @field_validator('phone')
+    @classmethod
+    def validate_phone(cls, v):
+        """Validate phone number format."""
+        if not re.match(r'^\+[1-9]\d{1,14}$', v):
+            raise ValueError('Phone number must be in international format (+1234567890)')
+        return v
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        """Validate password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        
+        # Check byte length (bcrypt has a 72-byte limit)
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (maximum 72 bytes when encoded)')
+        
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        return v
+    
+    @model_validator(mode='after')
+    def validate_user_type_flags(self):
+        """
+        Validate that exactly one user type flag is true.
+        
+        Note: is_customer is only used for validation and is NOT stored in the database.
+        When is_customer=true, both is_admin and is_moderator will be set to False in DB.
+        """
+        is_admin = self.is_admin
+        is_moderator = self.is_moderator
+        is_customer = self.is_customer
+        
+        # Count how many flags are True
+        true_count = sum([is_admin, is_moderator, is_customer])
+        
+        if true_count != 1:
+            raise ValueError('Exactly one of is_admin, is_moderator, or is_customer must be true (and the others false)')
+        
+        return self
+
+
+class AdminUserCreateResponse(BaseModel):
+    """Schema for user creation response."""
+    
+    id: str = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    username: str = Field(..., description="Username")
+    phone: str = Field(..., description="Phone number")
+    country_code: str = Field(..., description="Country code")
+    is_active: bool = Field(..., description="Whether user is active")
+    is_verified: bool = Field(..., description="Whether user is verified")
+    is_moderator: bool = Field(..., description="Whether user is moderator")
+    is_admin: bool = Field(..., description="Whether user is admin")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    message: str = Field(..., description="Success message")
 

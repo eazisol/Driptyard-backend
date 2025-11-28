@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 import math
+import re
 
 from app.database import get_db
-from app.security import get_current_user_id
+from app.security import get_current_user_id, get_password_hash
 from app.models.user import User
 from app.models.product import Product
 from app.models.category import MainCategory
@@ -24,7 +25,9 @@ from app.schemas.admin import (
     AdminProductUpdateRequest,
     AdminUserResponse,
     AdminUserListResponse,
-    AdminUserUpdateRequest
+    AdminUserUpdateRequest,
+    AdminUserCreateRequest,
+    AdminUserCreateResponse
 )
 from app.schemas.report import (
     ReportedProductListResponse,
@@ -1075,6 +1078,7 @@ async def list_reported_products(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by product title or report reason"),
     status: Optional[str] = Query(None, description="Filter by report status (pending, active, approved, rejected, processing, inactive)"),
     product_id: Optional[str] = Query(None, description="Filter by product ID"),
     user_id: Optional[str] = Query(None, description="Filter by reporting user ID"),
@@ -1082,16 +1086,18 @@ async def list_reported_products(
     date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
 ):
     """
-    List reported products with aggregation (Admin or Moderator with can_see_flagged_content permission).
+    List reported products with aggregation, search, and filtering (Admin or Moderator with can_see_flagged_content permission).
     
     Returns a paginated list of products that have been reported, grouped by product.
     Each product appears once with a count of total reports.
+    Supports searching by product title or report reason.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         page: Page number (starts from 1)
         page_size: Number of items per page
+        search: Search term for product title or report reason
         status: Filter by report status
         product_id: Filter by specific product ID
         user_id: Filter by reporting user ID
@@ -1111,6 +1117,7 @@ async def list_reported_products(
     return service.get_reported_products(
         page=page,
         page_size=page_size,
+        search=search,
         status_filter=status,
         product_id=product_id,
         user_id=user_id,
@@ -1125,6 +1132,7 @@ async def list_all_reports(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by product title or report reason"),
     status: Optional[str] = Query(None, description="Filter by report status (pending, active, approved, rejected, processing, inactive)"),
     product_id: Optional[str] = Query(None, description="Filter by product ID"),
     user_id: Optional[str] = Query(None, description="Filter by reporting user ID"),
@@ -1132,16 +1140,18 @@ async def list_all_reports(
     date_to: Optional[datetime] = Query(None, description="Filter reports to this date (ISO format)")
 ):
     """
-    List all reports with detailed information (Admin or Moderator with can_see_flagged_content permission).
+    List all reports with detailed information, search, and filtering (Admin or Moderator with can_see_flagged_content permission).
     
     Returns a paginated list of all individual reports (not aggregated).
     Each report is shown separately with full details.
+    Supports searching by product title or report reason.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         page: Page number (starts from 1)
         page_size: Number of items per page
+        search: Search term for product title or report reason
         status: Filter by report status
         product_id: Filter by specific product ID
         user_id: Filter by reporting user ID
@@ -1161,6 +1171,7 @@ async def list_all_reports(
     return service.get_all_reports(
         page=page,
         page_size=page_size,
+        search=search,
         status_filter=status,
         product_id=product_id,
         user_id=user_id,
@@ -1480,4 +1491,122 @@ async def get_spotlight_history(
         status=status,
         date_from=date_from,
         date_to=date_to
+    )
+
+
+@router.post("/users/create", response_model=AdminUserCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: AdminUserCreateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new user, moderator, or admin (Admin only).
+    
+    Creates a new user account with all required fields. Use the boolean flags
+    (is_admin, is_moderator, is_customer) to specify the user type. Exactly one
+    of these flags must be true.
+    
+    Important Notes:
+    - All admin-created users are automatically verified (is_verified=True)
+    - NO verification emails are sent to users created through this endpoint
+    - is_customer flag is only used for validation, NOT stored in database
+    - When is_customer=true, both is_admin and is_moderator will be False in DB
+    - Database only stores is_admin and is_moderator columns
+    
+    Args:
+        user_data: User creation data including email, password, username, phone, etc.
+                  Must include exactly one of: is_admin=true, is_moderator=true, or is_customer=true
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminUserCreateResponse: Created user information
+        
+    Raises:
+        HTTPException: If user is not admin, email/username already exists, validation fails, or creation fails
+    """
+    # Verify admin access
+    verify_admin_access(current_user_id, db)
+    
+    # Check if user with this email already exists
+    existing_user = db.query(User).filter(User.email == user_data.email.lower()).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered"
+        )
+    
+    # Check if username already exists
+    existing_username = db.query(User).filter(User.username == user_data.username.lower()).first()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already taken"
+        )
+    
+    # Hash password
+    try:
+        hashed_password = get_password_hash(user_data.password)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Password hashing failed: {str(e)}"
+        )
+    
+    # Use the boolean flags directly from the request
+    # Validation ensures exactly one of is_admin, is_moderator, or is_customer is true
+    # Note: is_customer is NOT stored in database - when is_customer=true,
+    #       both is_admin and is_moderator will be False (which represents a customer)
+    
+    # Create user account
+    # Admin-created users are automatically verified (no email verification needed)
+    new_user = User(
+        email=user_data.email.lower(),
+        username=user_data.username.lower(),
+        hashed_password=hashed_password,
+        phone=user_data.phone,
+        country_code=user_data.country_code,
+        company_name=user_data.company_name,
+        sin_number=user_data.sin_number,
+        is_admin=user_data.is_admin,
+        is_moderator=user_data.is_moderator,
+        # is_customer is NOT stored - it's just for validation
+        # When is_customer=true, both is_admin and is_moderator are False
+        is_active=True,
+        is_verified=True  # Admin-created users are automatically verified (NO email sent)
+    )
+    
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create user: {str(e)}"
+        )
+    
+    # Generate success message based on user type flags
+    if user_data.is_admin:
+        user_type_name = "admin"
+    elif user_data.is_moderator:
+        user_type_name = "moderator"
+    else:
+        user_type_name = "customer"
+    success_message = f"{user_type_name.capitalize()} created successfully"
+    
+    return AdminUserCreateResponse(
+        id=str(new_user.id),
+        email=new_user.email,
+        username=new_user.username,
+        phone=new_user.phone,
+        country_code=new_user.country_code,
+        is_active=new_user.is_active,
+        is_verified=new_user.is_verified,
+        is_moderator=new_user.is_moderator,
+        is_admin=new_user.is_admin,
+        created_at=new_user.created_at,
+        message=success_message
     )

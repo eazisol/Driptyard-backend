@@ -9,6 +9,8 @@ from typing import Optional
 import math
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy import or_
 
 from app.models.user import User
 from app.models.moderator import ModeratorPermission
@@ -32,23 +34,84 @@ class ModeratorService:
         """
         self.db = db
     
+    def _create_default_permissions_response(self, user_id: int) -> ModeratorPermissionResponse:
+        """
+        Create a default permissions response with all permissions set to False.
+        
+        Args:
+            user_id: User ID
+            
+        Returns:
+            ModeratorPermissionResponse: Default permissions (all False)
+        """
+        from datetime import datetime
+        return ModeratorPermissionResponse(
+            user_id=str(user_id),
+            can_see_dashboard=False,
+            can_see_users=False,
+            can_manage_users=False,
+            can_see_listings=False,
+            can_manage_listings=False,
+            can_see_spotlight_history=False,
+            can_spotlight=False,
+            can_remove_spotlight=False,
+            can_see_flagged_content=False,
+            can_manage_flagged_content=False,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+    
     def get_all_moderators(
         self,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 10,
+        search: Optional[str] = None,
+        status: Optional[str] = None,
+        is_verified: Optional[bool] = None
     ) -> ModeratorListResponse:
         """
-        Get all moderators with pagination.
+        Get all moderators with pagination, search, and filtering.
         
         Args:
             page: Page number
             page_size: Items per page
+            search: Search term for email, username, first name, or last name
+            status: Filter by status ('active' or 'inactive')
+            is_verified: Filter by verified status
             
         Returns:
             ModeratorListResponse: Paginated list of moderators
         """
         # Query moderators
         query = self.db.query(User).filter(User.is_moderator == True)
+        
+        # Apply search filter
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    User.email.ilike(search_term),
+                    User.username.ilike(search_term),
+                    User.first_name.ilike(search_term),
+                    User.last_name.ilike(search_term)
+                )
+            )
+        
+        # Apply status filter
+        if status:
+            if status.lower() == "active":
+                query = query.filter(User.is_active == True)
+            elif status.lower() == "inactive":
+                query = query.filter(User.is_active == False)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid status. Must be 'active' or 'inactive'"
+                )
+        
+        # Apply verification filter
+        if is_verified is not None:
+            query = query.filter(User.is_verified == is_verified)
         
         # Get total count
         total = query.count()
@@ -68,23 +131,25 @@ class ModeratorService:
                 ModeratorPermission.user_id == moderator.id
             ).first()
             
-            permissions_response = None
             if permissions:
                 permissions_response = ModeratorPermissionResponse(
-                user_id=str(moderator.id),
-                can_see_dashboard=permissions.can_see_dashboard,
-                can_see_users=permissions.can_see_users,
-                can_manage_users=permissions.can_manage_users,
-                can_see_listings=permissions.can_see_listings,
-                can_manage_listings=permissions.can_manage_listings,
-                can_see_spotlight_history=permissions.can_see_spotlight_history,
-                can_spotlight=permissions.can_spotlight,
-                can_remove_spotlight=permissions.can_remove_spotlight,
-                can_see_flagged_content=permissions.can_see_flagged_content,
-                can_manage_flagged_content=permissions.can_manage_flagged_content,
-                created_at=permissions.created_at,
-                updated_at=permissions.updated_at
-            )
+                    user_id=str(moderator.id),
+                    can_see_dashboard=permissions.can_see_dashboard,
+                    can_see_users=permissions.can_see_users,
+                    can_manage_users=permissions.can_manage_users,
+                    can_see_listings=permissions.can_see_listings,
+                    can_manage_listings=permissions.can_manage_listings,
+                    can_see_spotlight_history=permissions.can_see_spotlight_history,
+                    can_spotlight=permissions.can_spotlight,
+                    can_remove_spotlight=permissions.can_remove_spotlight,
+                    can_see_flagged_content=permissions.can_see_flagged_content,
+                    can_manage_flagged_content=permissions.can_manage_flagged_content,
+                    created_at=permissions.created_at,
+                    updated_at=permissions.updated_at
+                )
+            else:
+                # If no permissions record exists, return all False
+                permissions_response = self._create_default_permissions_response(moderator.id)
             
             moderator_list.append(ModeratorResponse(
                 id=str(moderator.id),
@@ -143,7 +208,6 @@ class ModeratorService:
             ModeratorPermission.user_id == user_id
         ).first()
         
-        permissions_response = None
         if permissions:
             permissions_response = ModeratorPermissionResponse(
                 user_id=str(user.id),
@@ -160,6 +224,9 @@ class ModeratorService:
                 created_at=permissions.created_at,
                 updated_at=permissions.updated_at
             )
+        else:
+            # If no permissions record exists, return all False
+            permissions_response = self._create_default_permissions_response(user.id)
         
         return ModeratorResponse(
             id=str(user.id),
@@ -360,10 +427,22 @@ class ModeratorService:
         ).first()
         
         if not permissions:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moderator permissions not found"
+            # Create new permissions record with all False if it doesn't exist
+            permissions = ModeratorPermission(
+                user_id=user_id,
+                can_see_dashboard=False,
+                can_see_users=False,
+                can_manage_users=False,
+                can_see_listings=False,
+                can_manage_listings=False,
+                can_see_spotlight_history=False,
+                can_spotlight=False,
+                can_remove_spotlight=False,
+                can_see_flagged_content=False,
+                can_manage_flagged_content=False
             )
+            self.db.add(permissions)
+            self.db.flush()  # Flush to get the ID without committing
         
         # Update permissions
         update_dict = permissions_data.model_dump(exclude_unset=True)
@@ -452,10 +531,8 @@ class ModeratorService:
         ).first()
         
         if not permissions:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Moderator permissions not found"
-            )
+            # If no permissions record exists, return all False instead of raising error
+            return self._create_default_permissions_response(user.id)
         
         return ModeratorPermissionResponse(
             user_id=str(user.id),
