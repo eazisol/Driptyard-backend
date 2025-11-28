@@ -216,6 +216,7 @@ class ProductListResponse(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     is_active: bool = Field(..., description="Whether product is active")
     is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
+    is_verified: bool = Field(..., description="Whether product has been verified")
 
     class Config:
         from_attributes = True

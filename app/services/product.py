@@ -101,7 +101,8 @@ class ProductService:
             seller=self._get_seller_info(seller),
             created_at=product.created_at,
             is_active=product.is_active,
-            is_spotlighted=product.is_spotlighted
+            is_spotlighted=product.is_spotlighted,
+            is_verified=product.is_verified
         )
     
     def _product_to_detail_response(self, product: Product, seller: User) -> ProductDetailResponse:
