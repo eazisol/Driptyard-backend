@@ -4,11 +4,11 @@ Admin management routes.
 This module contains admin-only endpoints for managing the platform.
 """
 
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, date
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, cast, Date
 import math
 import re
 
@@ -18,8 +18,12 @@ from app.models.user import User
 from app.models.product import Product
 from app.models.category import MainCategory
 from app.models.moderator import ModeratorPermission
+from app.models.report import ProductReport, ReportStatus
 from app.schemas.admin import (
     StatsOverviewResponse,
+    FlaggedContentItem,
+    PendingVerificationItem,
+    ChartDataPoint,
     AdminProductResponse,
     AdminProductListResponse,
     AdminProductUpdateRequest,
@@ -297,6 +301,65 @@ def calculate_percentage_change(current: float, previous: float) -> float:
     return ((current - previous) / previous) * 100.0
 
 
+def generate_chart_data(db: Session, model_class, date_column, days: int = 30) -> List[ChartDataPoint]:
+    """
+    Generate chart data for the last N days.
+    
+    Args:
+        db: Database session
+        model_class: SQLAlchemy model class (User or Product)
+        date_column: Column to use for date filtering (created_at)
+        days: Number of days to include (default 30)
+        
+    Returns:
+        List[ChartDataPoint]: List of chart data points with daily counts and cumulative totals
+    """
+    # Calculate date range
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=days - 1)
+    
+    # Query daily counts - cast timestamp to date for grouping
+    daily_counts = db.query(
+        func.date(date_column).label('date'),
+        func.count(model_class.id).label('count')
+    ).filter(
+        func.date(date_column) >= start_date,
+        func.date(date_column) <= end_date
+    ).group_by(
+        func.date(date_column)
+    ).order_by(
+        func.date(date_column)
+    ).all()
+    
+    # Create a dictionary of date -> count
+    counts_dict = {row.date: row.count for row in daily_counts}
+    
+    # Generate all dates in range and fill missing dates with 0
+    chart_data = []
+    cumulative = 0
+    
+    # Get total count before the date range for cumulative calculation
+    total_before = db.query(func.count(model_class.id)).filter(
+        func.date(date_column) < start_date
+    ).scalar() or 0
+    cumulative = total_before
+    
+    current_date = start_date
+    while current_date <= end_date:
+        count = counts_dict.get(current_date, 0)
+        cumulative += count
+        
+        chart_data.append(ChartDataPoint(
+            date=current_date.strftime('%Y-%m-%d'),
+            count=count,
+            cumulative=cumulative
+        ))
+        
+        current_date += timedelta(days=1)
+    
+    return chart_data
+
+
 @router.get("/stats/overview", response_model=StatsOverviewResponse)
 async def get_stats_overview(
     current_user_id: str = Depends(get_current_user_id),
@@ -376,10 +439,104 @@ async def get_stats_overview(
         User.is_verified == False
     ).scalar() or 0
     
-    # Flagged Content: Products that are flagged for review
-    flagged_content_count = db.query(func.count(Product.id)).filter(
-        Product.is_flagged == True
+    # Pending verifications for current month (users created this month that are unverified)
+    current_month_pending = db.query(func.count(User.id)).filter(
+        and_(
+            User.is_verified == False,
+            User.created_at >= current_month_start
+        )
     ).scalar() or 0
+    
+    # Pending verifications for last month (users created last month that are unverified)
+    last_month_pending = db.query(func.count(User.id)).filter(
+        and_(
+            User.is_verified == False,
+            User.created_at >= last_month_start,
+            User.created_at <= last_month_end
+        )
+    ).scalar() or 0
+    
+    # Calculate pending verifications change
+    pending_verifications_change = calculate_percentage_change(current_month_pending, last_month_pending)
+    
+    # Get pending verification users (limit to 10 most recent)
+    pending_verification_users_query = db.query(User).filter(
+        User.is_verified == False
+    ).order_by(User.created_at.desc()).limit(10).all()
+    
+    pending_verification_users = [
+        PendingVerificationItem(
+            id=str(user.id),
+            email=user.email,
+            username=user.username,
+            created_at=user.created_at
+        )
+        for user in pending_verification_users_query
+    ]
+    
+    # Flagged Content: Products that have pending reports
+    # Get pending status
+    pending_status = db.query(ReportStatus).filter(
+        ReportStatus.status == "pending"
+    ).first()
+    
+    if pending_status:
+        # Count unique products with pending reports
+        flagged_content_count = db.query(func.count(func.distinct(ProductReport.product_id))).filter(
+            ProductReport.status_id == pending_status.id
+        ).scalar() or 0
+        
+        # Flagged content for current month (reports created this month with pending status)
+        current_month_flagged = db.query(func.count(func.distinct(ProductReport.product_id))).filter(
+            and_(
+                ProductReport.status_id == pending_status.id,
+                ProductReport.created_at >= current_month_start
+            )
+        ).scalar() or 0
+        
+        # Flagged content for last month (reports created last month with pending status)
+        last_month_flagged = db.query(func.count(func.distinct(ProductReport.product_id))).filter(
+            and_(
+                ProductReport.status_id == pending_status.id,
+                ProductReport.created_at >= last_month_start,
+                ProductReport.created_at <= last_month_end
+            )
+        ).scalar() or 0
+        
+        # Calculate flagged content change
+        flagged_content_change = calculate_percentage_change(current_month_flagged, last_month_flagged)
+        
+        # Get flagged content items (products with pending reports, limit to 10 most recent)
+        # Get distinct product IDs with pending reports, ordered by most recent report
+        flagged_product_ids_query = db.query(
+            ProductReport.product_id,
+            func.max(ProductReport.created_at).label('latest_report_date')
+        ).filter(
+            ProductReport.status_id == pending_status.id
+        ).group_by(ProductReport.product_id).order_by(
+            func.max(ProductReport.created_at).desc()
+        ).limit(10).all()
+        
+        flagged_content = []
+        for product_id_result in flagged_product_ids_query:
+            product_id_int = product_id_result.product_id
+            product = db.query(Product).filter(Product.id == product_id_int).first()
+            if product:
+                flagged_content.append(FlaggedContentItem(
+                    id=str(product.id),
+                    title=product.title,
+                    owner_id=str(product.owner_id),
+                    owner_name=product.owner.username if product.owner else None,
+                    created_at=product.created_at
+                ))
+    else:
+        flagged_content_count = 0
+        flagged_content_change = 0.0
+        flagged_content = []
+    
+    # Generate chart data for the last 30 days
+    users_growth_data = generate_chart_data(db, User, User.created_at, days=30)
+    products_growth_data = generate_chart_data(db, Product, Product.created_at, days=30)
     
     return StatsOverviewResponse(
         total_users=total_users,
@@ -387,7 +544,13 @@ async def get_stats_overview(
         total_products=total_products,
         products_change=round(products_change, 1),
         pending_verifications=pending_verifications,
-        flagged_content_count=flagged_content_count
+        pending_verifications_change=round(pending_verifications_change, 1),
+        flagged_content_count=flagged_content_count,
+        flagged_content_change=round(flagged_content_change, 1),
+        flagged_content=flagged_content,
+        pending_verification_users=pending_verification_users,
+        users_growth_data=users_growth_data,
+        products_growth_data=products_growth_data
     )
 
 
@@ -757,7 +920,8 @@ async def list_admin_users(
             is_verified=user.is_verified,
             is_admin=user.is_admin,
             avatar_url=user.avatar_url,
-            created_at=user.created_at
+            created_at=user.created_at,
+            is_moderator=user.is_moderator
         ))
     
     return AdminUserListResponse(

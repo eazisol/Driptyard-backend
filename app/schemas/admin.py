@@ -13,6 +13,33 @@ from pydantic import BaseModel, Field, EmailStr, field_validator, model_validato
 from app.schemas.base import BaseCreateSchema
 
 
+class FlaggedContentItem(BaseModel):
+    """Schema for flagged content item in stats overview."""
+    
+    id: str = Field(..., description="Product ID")
+    title: str = Field(..., description="Product title")
+    owner_id: str = Field(..., description="Owner/seller ID")
+    owner_name: Optional[str] = Field(None, description="Owner/seller username")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class PendingVerificationItem(BaseModel):
+    """Schema for pending verification user in stats overview."""
+    
+    id: str = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    username: str = Field(..., description="Username")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class ChartDataPoint(BaseModel):
+    """Schema for a single data point in a chart."""
+    
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    count: int = Field(..., description="Count for this date")
+    cumulative: int = Field(..., description="Cumulative count up to this date")
+
+
 class StatsOverviewResponse(BaseModel):
     """Schema for admin stats overview response."""
     
@@ -21,7 +48,13 @@ class StatsOverviewResponse(BaseModel):
     total_products: int = Field(..., description="Total number of products (listings)")
     products_change: float = Field(..., description="Percentage change in products compared to previous period")
     pending_verifications: int = Field(..., description="Number of users pending verification")
+    pending_verifications_change: float = Field(..., description="Percentage change in pending verifications compared to previous period")
     flagged_content_count: int = Field(..., description="Number of flagged content items (unverified products)")
+    flagged_content_change: float = Field(..., description="Percentage change in flagged content compared to previous period")
+    flagged_content: List[FlaggedContentItem] = Field(default_factory=list, description="List of flagged content items")
+    pending_verification_users: List[PendingVerificationItem] = Field(default_factory=list, description="List of users pending verification")
+    users_growth_data: List[ChartDataPoint] = Field(default_factory=list, description="Daily user growth data for the last 30 days")
+    products_growth_data: List[ChartDataPoint] = Field(default_factory=list, description="Daily product growth data for the last 30 days")
 
 
 class AdminProductResponse(BaseModel):
@@ -84,6 +117,7 @@ class AdminUserResponse(BaseModel):
     is_admin: bool = Field(..., description="Whether user is admin")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
     created_at: datetime = Field(..., description="Creation timestamp")
+    is_moderator: bool = Field(..., description="Whether user is moderator")
 
 
 class AdminUserListResponse(BaseModel):
