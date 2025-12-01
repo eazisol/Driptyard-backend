@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.security import get_current_user_id
+from app.security import get_current_user_id, get_optional_user_id
+from app.models.product import Product
 from app.schemas.product import (
     ProductCreate,
     ProductUpdate,
@@ -22,6 +23,7 @@ from app.schemas.spotlight import ProductSpotlightStatusResponse
 from app.services.product import ProductService
 from app.services.report import ProductReportService
 from app.services.spotlight import SpotlightService
+from app.services.follow import FollowService
 
 router = APIRouter()
 
@@ -200,6 +202,7 @@ async def list_my_products(
 async def list_products(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(12, ge=1, le=100, description="Items per page"),
+    type: Optional[str] = Query(None, description="Filter type: 'spotlighted' for spotlighted products, 'recommended' for recommended products, or omit for all products"),
     category: Optional[str] = Query(None, description="Filter by category"),
     product_type: Optional[str] = Query(None, description="Filter by product type"),
     sub_category: Optional[str] = Query(None, description="Filter by sub-category"),
@@ -214,14 +217,21 @@ async def list_products(
     colors: Optional[List[str]] = Query(None, description="Filter by colors (array)"),
     conditions: Optional[List[str]] = Query(None, description="Filter by conditions (array)"),
     delivery: Optional[List[str]] = Query(None, description="Filter by delivery method (array)"),
+    current_user_id: Optional[str] = Depends(get_optional_user_id),
     db: Session = Depends(get_db)
 ):
     """
-    List all products with filtering and pagination.
+    List products with filtering and pagination.
+    
+    Use the 'type' parameter to filter:
+    - type=spotlighted: Get only spotlighted products (admin-promoted)
+    - type=recommended: Get only recommended products (non-spotlighted)
+    - type=None or omitted: Get all products (default)
     
     Args:
-        page: Page number
+        page: Page number (starts from 1)
         page_size: Items per page
+        type: Filter type ('spotlighted', 'recommended', or None for all)
         category: Filter by category
         product_type: Filter by product type
         sub_category: Filter by sub-category
@@ -242,29 +252,113 @@ async def list_products(
         ProductPaginationResponse: Paginated list of products
     """
     service = ProductService(db)
-    return service.list_products(
-        page=page,
-        page_size=page_size,
-        category=category,
-        product_type=product_type,
-        sub_category=sub_category,
-        gender=gender,
-        location=location,
-        search=search,
-        min_price=min_price,
-        max_price=max_price,
-        sort=sort,
-        brands=brands,
-        sizes=sizes,
-        colors=colors,
-        conditions=conditions,
-        delivery=delivery
-    )
+    
+    # Convert user_id to int if authenticated
+    user_id_int = None
+    if current_user_id:
+        try:
+            user_id_int = int(current_user_id)
+        except (ValueError, TypeError):
+            user_id_int = None
+    
+    # Route to appropriate method based on type parameter
+    if type and type.lower() == "spotlighted":
+        return service.list_featured_products(
+            page=page,
+            page_size=page_size,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery,
+            user_id=user_id_int
+        )
+    elif type and type.lower() == "recommended":
+        return service.list_recommended_products(
+            page=page,
+            page_size=page_size,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery,
+            user_id=user_id_int
+        )
+    else:
+        # Default: all products
+        return service.list_products(
+            page=page,
+            page_size=page_size,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery,
+            user_id=user_id_int
+        )
+
+
+@router.get("/seller/{seller_id}/listings", response_model=ProductPaginationResponse)
+async def get_seller_listings(
+    seller_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(12, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all product listings for a specific seller (open route, no authentication required).
+    
+    Returns all products created by the specified seller with pagination support.
+    This is a public endpoint that can be accessed without authentication.
+    
+    Args:
+        seller_id: Seller ID (integer)
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        db: Database session
+        
+    Returns:
+        ProductPaginationResponse: Paginated list of seller's products
+        
+    Raises:
+        HTTPException: If seller not found
+    """
+    service = ProductService(db)
+    # Return all products for the seller (no status filter)
+    return service.list_user_products(seller_id, page, page_size, None, None)
 
 
 @router.get("/{product_id}", response_model=ProductDetailResponse)
 async def get_product(
     product_id: str,
+    current_user_id: Optional[str] = Depends(get_optional_user_id),
     db: Session = Depends(get_db)
 ):
     """
@@ -272,19 +366,73 @@ async def get_product(
     
     Returns complete product details including specifications, 
     seller information, ratings, and policies.
+    Includes seller follow status if user is authenticated.
     
     Args:
         product_id: Product ID (integer)
+        current_user_id: Optional authenticated user ID
         db: Database session
         
     Returns:
-        ProductDetailResponse: Complete product details
+        ProductDetailResponse: Complete product details with seller follow status
         
     Raises:
         HTTPException: If product not found
     """
     service = ProductService(db)
-    return service.get_product(product_id)
+    
+    # Convert user_id to int if authenticated
+    user_id_int = None
+    if current_user_id:
+        try:
+            user_id_int = int(current_user_id)
+        except (ValueError, TypeError):
+            user_id_int = None
+    
+    return service.get_product(product_id, user_id_int)
+
+
+@router.get("/{product_id}/followers")
+async def get_product_followers_count(
+    product_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get count of followers for a product (public endpoint).
+    
+    Args:
+        product_id: Product ID
+        db: Database session
+        
+    Returns:
+        dict: Product followers count
+        
+    Raises:
+        HTTPException: If product not found
+    """
+    try:
+        prod_id = int(product_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID format"
+        )
+    
+    # Validate product exists
+    product = db.query(Product).filter(Product.id == prod_id).first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    
+    service = FollowService(db)
+    followers_count = service.get_product_followers_count(prod_id)
+    
+    return {
+        "product_id": str(prod_id),
+        "followers_count": followers_count
+    }
 
 
 @router.get("/{product_id}/spotlight", response_model=ProductSpotlightStatusResponse)

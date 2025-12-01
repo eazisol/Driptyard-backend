@@ -40,6 +40,7 @@ from app.schemas.product import (
 from app.services.s3 import get_s3_service
 from app.services.email import email_service
 from app.services.spotlight import SpotlightService
+from app.models.follow import ProductFollow, SellerFollow
 
 
 class ProductService:
@@ -70,7 +71,28 @@ class ProductService:
             return value
         return str(value).strip().lower() in {"true", "1", "yes", "on"}
     
-    def _get_seller_info(self, user: User) -> SellerInfo:
+    def _is_following_seller(self, user_id: Optional[int], seller_id: int) -> bool:
+        """
+        Check if a user is following a seller.
+        
+        Args:
+            user_id: User ID (None if not authenticated)
+            seller_id: Seller ID to check
+            
+        Returns:
+            bool: True if following, False otherwise
+        """
+        if not user_id:
+            return False
+        
+        follow = self.db.query(SellerFollow).filter(
+            SellerFollow.follower_id == user_id,
+            SellerFollow.followed_user_id == seller_id
+        ).first()
+        
+        return follow is not None
+    
+    def _get_seller_info(self, user: User, is_followed: bool = False) -> SellerInfo:
         """Helper function to extract seller information."""
         return SellerInfo(
             id=str(user.id),
@@ -78,10 +100,54 @@ class ProductService:
             rating=4.8,  # TODO: Calculate from reviews
             total_sales=156,  # TODO: Get from orders
             avatar_url=user.avatar_url,
-            is_verified=user.is_verified
+            is_verified=user.is_verified,
+            bio=user.bio,
+            is_followed=is_followed
         )
     
-    def _product_to_list_response(self, product: Product, seller: User) -> ProductListResponse:
+    def _get_followed_product_ids(self, user_id: Optional[int], product_ids: List[int]) -> set:
+        """
+        Get set of product IDs that the user is following.
+        
+        Args:
+            user_id: User ID (None if not authenticated)
+            product_ids: List of product IDs to check
+            
+        Returns:
+            set: Set of product IDs that the user is following
+        """
+        if not user_id or not product_ids:
+            return set()
+        
+        followed = self.db.query(ProductFollow).filter(
+            ProductFollow.user_id == user_id,
+            ProductFollow.product_id.in_(product_ids)
+        ).all()
+        
+        return {follow.product_id for follow in followed}
+    
+    def _get_followed_seller_ids(self, user_id: Optional[int], seller_ids: List[int]) -> set:
+        """
+        Get set of seller IDs that the user is following.
+        
+        Args:
+            user_id: User ID (None if not authenticated)
+            seller_ids: List of seller IDs to check
+            
+        Returns:
+            set: Set of seller IDs that the user is following
+        """
+        if not user_id or not seller_ids:
+            return set()
+        
+        followed = self.db.query(SellerFollow).filter(
+            SellerFollow.follower_id == user_id,
+            SellerFollow.followed_user_id.in_(seller_ids)
+        ).all()
+        
+        return {follow.followed_user_id for follow in followed}
+    
+    def _product_to_list_response(self, product: Product, seller: User, is_followed: bool = False, seller_is_followed: bool = False) -> ProductListResponse:
         """Convert Product model to ProductListResponse."""
         return ProductListResponse(
             id=str(product.id),
@@ -98,14 +164,15 @@ class ProductService:
             product_style=product.product_style,
             colors=product.colors or [],
             purchase_button_enabled=product.purchase_button_enabled,
-            seller=self._get_seller_info(seller),
+            seller=self._get_seller_info(seller, is_followed=seller_is_followed),
             created_at=product.created_at,
             is_active=product.is_active,
             is_spotlighted=product.is_spotlighted,
-            is_verified=product.is_verified
+            is_verified=product.is_verified,
+            is_followed=is_followed
         )
     
-    def _product_to_detail_response(self, product: Product, seller: User) -> ProductDetailResponse:
+    def _product_to_detail_response(self, product: Product, seller: User, user_id: Optional[int] = None) -> ProductDetailResponse:
         """Convert Product model to ProductDetailResponse."""
         # Fetch related category names
         category_name = None
@@ -178,7 +245,7 @@ class ProductService:
             measurement_length=product.measurement_length,
             measurement_hem=product.measurement_hem,
             measurement_shoulders=product.measurement_shoulders,
-            seller=self._get_seller_info(seller),
+            seller=self._get_seller_info(seller, is_followed=self._is_following_seller(user_id, seller.id)),
             created_at=product.created_at,
             updated_at=product.updated_at
         )
@@ -434,7 +501,8 @@ class ProductService:
         sizes: Optional[List[str]] = None,
         colors: Optional[List[str]] = None,
         conditions: Optional[List[str]] = None,
-        delivery: Optional[List[str]] = None
+        delivery: Optional[List[str]] = None,
+        user_id: Optional[int] = None
     ) -> ProductPaginationResponse:
         """
         Get spotlighted products listing with filtering and sorting.
@@ -500,11 +568,21 @@ class ProductService:
         total = query.count()
         products = query.offset(offset).limit(page_size).all()
         
+        # Get followed product IDs if user is authenticated
+        product_ids = [product.id for product in products]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
+        
+        # Get followed seller IDs if user is authenticated
+        seller_ids = [product.owner_id for product in products]
+        followed_seller_ids = self._get_followed_seller_ids(user_id, seller_ids)
+        
         items = []
         for product in products:
             seller = self.db.query(User).filter(User.id == product.owner_id).first()
             if seller:
-                items.append(self._product_to_list_response(product, seller))
+                is_followed = product.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(product, seller, is_followed, seller_is_followed))
         
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         
@@ -535,7 +613,8 @@ class ProductService:
         sizes: Optional[List[str]] = None,
         colors: Optional[List[str]] = None,
         conditions: Optional[List[str]] = None,
-        delivery: Optional[List[str]] = None
+        delivery: Optional[List[str]] = None,
+        user_id: Optional[int] = None
     ) -> ProductPaginationResponse:
         """
         Get recommended products for user with filtering and sorting.
@@ -598,11 +677,21 @@ class ProductService:
         total = query.count()
         products = query.offset(offset).limit(page_size).all()
         
+        # Get followed product IDs if user is authenticated
+        product_ids = [product.id for product in products]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
+        
+        # Get followed seller IDs if user is authenticated
+        seller_ids = [product.owner_id for product in products]
+        followed_seller_ids = self._get_followed_seller_ids(user_id, seller_ids)
+        
         items = []
         for product in products:
             seller = self.db.query(User).filter(User.id == product.owner_id).first()
             if seller:
-                items.append(self._product_to_list_response(product, seller))
+                is_followed = product.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(product, seller, is_followed, seller_is_followed))
         
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         
@@ -686,7 +775,9 @@ class ProductService:
         offset = (page - 1) * page_size
         products = query.order_by(Product.created_at.desc()).offset(offset).limit(page_size).all()
         
-        items = [self._product_to_list_response(product, user) for product in products]
+        # For user's own products, is_followed is False (users don't follow their own products)
+        # Seller is the same as the user, so seller_is_followed is also False (can't follow self)
+        items = [self._product_to_list_response(product, user, is_followed=False, seller_is_followed=False) for product in products]
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         
         return ProductPaginationResponse(
@@ -716,7 +807,8 @@ class ProductService:
         sizes: Optional[List[str]] = None,
         colors: Optional[List[str]] = None,
         conditions: Optional[List[str]] = None,
-        delivery: Optional[List[str]] = None
+        delivery: Optional[List[str]] = None,
+        user_id: Optional[int] = None
     ) -> ProductPaginationResponse:
         """
         List all products with filtering and pagination.
@@ -778,11 +870,21 @@ class ProductService:
         total = query.count()
         products = query.offset(offset).limit(page_size).all()
         
+        # Get followed product IDs if user is authenticated
+        product_ids = [product.id for product in products]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
+        
+        # Get followed seller IDs if user is authenticated
+        seller_ids = [product.owner_id for product in products]
+        followed_seller_ids = self._get_followed_seller_ids(user_id, seller_ids)
+        
         items = []
         for product in products:
             seller = self.db.query(User).filter(User.id == product.owner_id).first()
             if seller:
-                items.append(self._product_to_list_response(product, seller))
+                is_followed = product.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(product, seller, is_followed, seller_is_followed))
         
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         
@@ -796,12 +898,13 @@ class ProductService:
             has_prev=page > 1
         )
     
-    def get_product(self, product_id: str) -> ProductDetailResponse:
+    def get_product(self, product_id: str, user_id: Optional[int] = None) -> ProductDetailResponse:
         """
         Get detailed product information by ID.
         
         Args:
             product_id: Product ID (integer)
+            user_id: Optional user ID to check follow status
             
         Returns:
             ProductDetailResponse: Complete product details
@@ -839,7 +942,7 @@ class ProductService:
                 detail="Seller not found"
             )
         
-        return self._product_to_detail_response(product, seller)
+        return self._product_to_detail_response(product, seller, user_id)
     
     def create_product(
         self,
@@ -1299,7 +1402,8 @@ class ProductService:
         self.db.commit()
         self.db.refresh(product)
         
-        return self._product_to_detail_response(product, user)
+        # User creating product is the owner, so is_followed will be False (can't follow self)
+        return self._product_to_detail_response(product, user, user_id=None)
     
     def send_verification_code(self, product_id: str, user_id: str) -> Dict[str, str]:
         """
@@ -1408,7 +1512,8 @@ class ProductService:
             seller = self.db.query(User).filter(User.id == product.owner_id).first()
             if not seller:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
-            return self._product_to_detail_response(product, seller)
+            # User verifying is the owner, so is_followed will be False (can't follow self)
+            return self._product_to_detail_response(product, seller, user_id=None)
         
         if not product.verification_code:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found. Request a new code.")
@@ -1437,7 +1542,8 @@ class ProductService:
         if not seller:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller not found")
         
-        return self._product_to_detail_response(product, seller)
+        # User updating is the owner, so is_followed will be False (can't follow self)
+        return self._product_to_detail_response(product, seller, user_id=None)
     
     def update_product(self, product_id: str, product_data: ProductUpdate, user_id: str) -> ProductDetailResponse:
         """
@@ -1493,7 +1599,8 @@ class ProductService:
         
         seller = self.db.query(User).filter(User.id == product.owner_id).first()
         
-        return self._product_to_detail_response(product, seller)
+        # User updating is the owner, so is_followed will be False (can't follow self)
+        return self._product_to_detail_response(product, seller, user_id=None)
     
     def add_product_images(self, product_id: str, images: List[UploadFile], user_id: str) -> ProductDetailResponse:
         """

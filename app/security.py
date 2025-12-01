@@ -182,6 +182,24 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
     return user_id
 
 
+def get_optional_user_id(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[str]:
+    """
+    Get current user ID from Bearer token if present, otherwise return None.
+    
+    This allows endpoints to work with or without authentication.
+    
+    Args:
+        credentials: Optional HTTP Authorization credentials containing the Bearer token
+        
+    Returns:
+        Optional[str]: The user ID if token is valid, None otherwise
+    """
+    if credentials is None:
+        return None
+    token = credentials.credentials
+    return verify_token(token)
+
+
 def check_spotlight_permission(user: User, db: Session) -> bool:
     """
     Check if user can apply spotlight.

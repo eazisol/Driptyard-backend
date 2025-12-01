@@ -23,6 +23,8 @@ class SellerInfo(BaseModel):
     total_sales: int = Field(default=0, description="Total number of sales")
     avatar_url: Optional[str] = Field(None, description="Seller avatar URL")
     is_verified: bool = Field(default=False, description="Whether seller is verified")
+    bio: Optional[str] = Field(None, description="Seller bio")
+    is_followed: bool = Field(default=False, description="Whether the current user is following this seller")
 
 
 class ProductCreate(BaseCreateSchema):
@@ -217,6 +219,7 @@ class ProductListResponse(BaseModel):
     is_active: bool = Field(..., description="Whether product is active")
     is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
     is_verified: bool = Field(..., description="Whether product has been verified")
+    is_followed: bool = Field(default=False, description="Whether the current user is following this product")
 
     class Config:
         from_attributes = True

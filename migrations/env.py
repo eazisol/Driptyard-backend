@@ -17,6 +17,7 @@ from app.models.order import Order
 from app.models.report import ReportStatus, ProductReport
 from app.models.spotlight import Spotlight, SpotlightHistory
 from app.models.moderator import ModeratorPermission
+from app.models.follow import SellerFollow, ProductFollow
 
 target_metadata = Base.metadata
 # this is the Alembic Config object, which provides
