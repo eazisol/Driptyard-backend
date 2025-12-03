@@ -51,6 +51,8 @@ class StatsOverviewResponse(BaseModel):
     pending_verifications_change: float = Field(..., description="Percentage change in pending verifications compared to previous period")
     flagged_content_count: int = Field(..., description="Number of flagged content items (unverified products)")
     flagged_content_change: float = Field(..., description="Percentage change in flagged content compared to previous period")
+    total_listings_removed: int = Field(..., description="Total number of listings removed (product_reports with status_id = 3)")
+    listings_removed_change: float = Field(..., description="Percentage change in listings removed compared to previous period")
     flagged_content: List[FlaggedContentItem] = Field(default_factory=list, description="List of flagged content items")
     pending_verification_users: List[PendingVerificationItem] = Field(default_factory=list, description="List of users pending verification")
     users_growth_data: List[ChartDataPoint] = Field(default_factory=list, description="Daily user growth data for the last 30 days")
@@ -106,18 +108,25 @@ class AdminUserResponse(BaseModel):
     """Schema for admin user list item."""
     
     id: str = Field(..., description="User ID")
+    user_id: str = Field(..., description="User ID (alias for id)")
     email: str = Field(..., description="User email")
     username: str = Field(..., description="Username")
     first_name: Optional[str] = Field(None, description="First name")
     last_name: Optional[str] = Field(None, description="Last name")
     phone: Optional[str] = Field(None, description="Phone number")
     country_code: Optional[str] = Field(None, description="Country code")
+    bio: Optional[str] = Field(None, description="User bio")
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
+    is_banned: bool = Field(..., description="Whether user is banned (is_active=False)")
+    is_suspended: bool = Field(..., description="Whether user is suspended")
     is_admin: bool = Field(..., description="Whether user is admin")
-    avatar_url: Optional[str] = Field(None, description="Avatar URL")
-    created_at: datetime = Field(..., description="Creation timestamp")
     is_moderator: bool = Field(..., description="Whether user is moderator")
+    avatar_url: Optional[str] = Field(None, description="Avatar URL")
+    listings_count: int = Field(0, description="Count of user's active listings")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    last_login: Optional[datetime] = Field(None, description="Last login timestamp")
 
 
 class AdminUserListResponse(BaseModel):
@@ -246,4 +255,64 @@ class AdminUserCreateResponse(BaseModel):
     is_admin: bool = Field(..., description="Whether user is admin")
     created_at: datetime = Field(..., description="Creation timestamp")
     message: str = Field(..., description="Success message")
+
+
+class SuspendUserResponse(BaseModel):
+    """Schema for suspend user response."""
+    
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field(..., description="Success message")
+    user_id: str = Field(..., description="User ID")
+    suspended_at: datetime = Field(..., description="Suspension timestamp")
+
+
+class UnsuspendUserResponse(BaseModel):
+    """Schema for unsuspend user response."""
+    
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field(..., description="Success message")
+    user_id: str = Field(..., description="User ID")
+    unsuspended_at: datetime = Field(..., description="Unsuspension timestamp")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Schema for password reset request."""
+    
+    new_password: str = Field(..., min_length=8, max_length=100, description="New password for the user")
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_password(cls, v):
+        """Validate password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        
+        # Check byte length (bcrypt has a 72-byte limit)
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (maximum 72 bytes when encoded)')
+        
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        return v
+
+
+class ResetPasswordResponse(BaseModel):
+    """Schema for password reset response."""
+    
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field(..., description="Success message")
+    user_id: str = Field(..., description="User ID")
+
+
+class DeleteUserResponse(BaseModel):
+    """Schema for delete user response."""
+    
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field(..., description="Success message")
+    user_id: str = Field(..., description="User ID")
+    deleted_at: datetime = Field(..., description="Deletion timestamp")
 

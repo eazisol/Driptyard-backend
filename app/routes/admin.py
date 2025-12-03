@@ -9,8 +9,10 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, cast, Date
+from sqlalchemy.exc import IntegrityError
 import math
 import re
+import logging
 
 from app.database import get_db
 from app.security import get_current_user_id, get_password_hash
@@ -31,7 +33,12 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserUpdateRequest,
     AdminUserCreateRequest,
-    AdminUserCreateResponse
+    AdminUserCreateResponse,
+    SuspendUserResponse,
+    UnsuspendUserResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
+    DeleteUserResponse
 )
 from app.schemas.report import (
     ReportedProductListResponse,
@@ -534,6 +541,31 @@ async def get_stats_overview(
         flagged_content_change = 0.0
         flagged_content = []
     
+    # Total Listings Removed: Count of product_reports with status_id = 3 (approved/removed)
+    total_listings_removed = db.query(func.count(ProductReport.id)).filter(
+        ProductReport.status_id == 3
+    ).scalar() or 0
+    
+    # Listings removed for current month (reports with status_id = 3 created this month)
+    current_month_removed = db.query(func.count(ProductReport.id)).filter(
+        and_(
+            ProductReport.status_id == 3,
+            ProductReport.created_at >= current_month_start
+        )
+    ).scalar() or 0
+    
+    # Listings removed for last month (reports with status_id = 3 created last month)
+    last_month_removed = db.query(func.count(ProductReport.id)).filter(
+        and_(
+            ProductReport.status_id == 3,
+            ProductReport.created_at >= last_month_start,
+            ProductReport.created_at <= last_month_end
+        )
+    ).scalar() or 0
+    
+    # Calculate listings removed change
+    listings_removed_change = calculate_percentage_change(current_month_removed, last_month_removed)
+    
     # Generate chart data for the last 30 days
     users_growth_data = generate_chart_data(db, User, User.created_at, days=30)
     products_growth_data = generate_chart_data(db, Product, Product.created_at, days=30)
@@ -547,6 +579,8 @@ async def get_stats_overview(
         pending_verifications_change=round(pending_verifications_change, 1),
         flagged_content_count=flagged_content_count,
         flagged_content_change=round(flagged_content_change, 1),
+        total_listings_removed=total_listings_removed,
+        listings_removed_change=round(listings_removed_change, 1),
         flagged_content=flagged_content,
         pending_verification_users=pending_verification_users,
         users_growth_data=users_growth_data,
@@ -843,7 +877,8 @@ async def list_admin_users(
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by email or username"),
     status: Optional[str] = Query(None, description="Filter by status: 'active' or 'inactive'"),
-    is_verified: Optional[bool] = Query(None, description="Filter by verified status")
+    is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
+    exclude_admins: bool = Query(True, description="Exclude admin users from results")
 ):
     """
     List all users with filtering and pagination (Admin or Moderator with can_see_users permission).
@@ -858,6 +893,7 @@ async def list_admin_users(
         search: Search term for email or username
         status: Filter by status ('active' maps to is_active=True, 'inactive' maps to is_active=False)
         is_verified: Filter by verified status
+        exclude_admins: Exclude admin users from results (default: True)
         
     Returns:
         AdminUserListResponse: Paginated list of users
@@ -870,6 +906,10 @@ async def list_admin_users(
     
     # Build query
     query = db.query(User)
+    
+    # Exclude admins if requested
+    if exclude_admins:
+        query = query.filter(User.is_admin == False)
     
     # Apply filters
     if search:
@@ -908,20 +948,33 @@ async def list_admin_users(
     # Convert to response format
     user_list = []
     for user in users:
+        # Count user's active listings
+        listings_count = db.query(func.count(Product.id)).filter(
+            Product.owner_id == user.id,
+            Product.is_active == True
+        ).scalar() or 0
+        
         user_list.append(AdminUserResponse(
             id=str(user.id),
+            user_id=str(user.id),
             email=user.email,
             username=user.username,
             first_name=user.first_name,
             last_name=user.last_name,
             phone=user.phone,
             country_code=user.country_code,
+            bio=user.bio,
             is_active=user.is_active,
             is_verified=user.is_verified,
+            is_banned=not user.is_active,
+            is_suspended=user.is_suspended if hasattr(user, 'is_suspended') else False,
             is_admin=user.is_admin,
+            is_moderator=user.is_moderator,
             avatar_url=user.avatar_url,
+            listings_count=listings_count,
             created_at=user.created_at,
-            is_moderator=user.is_moderator
+            updated_at=user.updated_at,
+            last_login=user.last_login if hasattr(user, 'last_login') else None
         ))
     
     return AdminUserListResponse(
@@ -930,6 +983,78 @@ async def list_admin_users(
         page=page,
         page_size=page_size,
         total_pages=total_pages
+    )
+
+
+@router.get("/users/{user_id}", response_model=AdminUserResponse)
+async def get_admin_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed user information (Admin or Moderator with can_see_users permission).
+    
+    Returns detailed information about a specific user including all fields.
+    
+    Args:
+        user_id: User ID (integer as string)
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        AdminUserResponse: Detailed user information
+        
+    Raises:
+        HTTPException: If user doesn't have permission or user not found
+    """
+    # Verify admin or moderator with users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=False)
+    
+    # Get user
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format. Expected integer."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Count user's active listings
+    listings_count = db.query(func.count(Product.id)).filter(
+        Product.owner_id == user.id,
+        Product.is_active == True
+    ).scalar() or 0
+    
+    return AdminUserResponse(
+        id=str(user.id),
+        user_id=str(user.id),
+        email=user.email,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        phone=user.phone,
+        country_code=user.country_code,
+        bio=user.bio,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_banned=not user.is_active,
+        is_suspended=user.is_suspended if hasattr(user, 'is_suspended') else False,
+        is_admin=user.is_admin,
+        is_moderator=user.is_moderator,
+        avatar_url=user.avatar_url,
+        listings_count=listings_count,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        last_login=user.last_login if hasattr(user, 'last_login') else None
     )
 
 
@@ -1027,6 +1152,24 @@ async def update_admin_user(
     try:
         db.commit()
         db.refresh(user)
+    except IntegrityError as e:
+        db.rollback()
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        if 'unique constraint' in error_msg.lower() or 'duplicate' in error_msg.lower():
+            if 'email' in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email is already taken"
+                )
+            elif 'username' in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username is already taken"
+                )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation failed: {error_msg}"
+        )
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -1034,19 +1177,33 @@ async def update_admin_user(
             detail=f"Failed to update user: {str(e)}"
         )
     
+    # Count user's active listings
+    listings_count = db.query(func.count(Product.id)).filter(
+        Product.owner_id == user.id,
+        Product.is_active == True
+    ).scalar() or 0
+    
     return AdminUserResponse(
         id=str(user.id),
+        user_id=str(user.id),
         email=user.email,
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
         phone=user.phone,
         country_code=user.country_code,
+        bio=user.bio,
         is_active=user.is_active,
         is_verified=user.is_verified,
+        is_banned=not user.is_active,
+        is_suspended=user.is_suspended if hasattr(user, 'is_suspended') else False,
         is_admin=user.is_admin,
+        is_moderator=user.is_moderator,
         avatar_url=user.avatar_url,
-        created_at=user.created_at
+        listings_count=listings_count,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        last_login=user.last_login if hasattr(user, 'last_login') else None
     )
 
 
@@ -1183,7 +1340,235 @@ async def unban_admin_user(
     )
 
 
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/users/{user_id}/suspend", response_model=SuspendUserResponse)
+async def suspend_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Suspend a user (Admin or Moderator with can_manage_users permission).
+    
+    Sets user's is_suspended to True and prevents login while suspended.
+    Sends notification email to user.
+    
+    Args:
+        user_id: User ID (integer as string)
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        SuspendUserResponse: Suspension confirmation
+        
+    Raises:
+        HTTPException: If user doesn't have permission or user not found
+    """
+    from app.services.email import email_service
+    from datetime import datetime
+    
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
+    
+    # Get user
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format. Expected integer."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Prevent admin from suspending themselves
+    if str(user.id) == current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot suspend yourself"
+        )
+    
+    # Suspend user
+    user.is_suspended = True
+    user.is_active = False
+    user.suspended_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    
+    # Send notification email (asynchronously - don't wait for it)
+    try:
+        email_service.send_account_suspended_email(user.email, user.username)
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Failed to send suspension email: {e}")
+    
+    return SuspendUserResponse(
+        success=True,
+        message="User suspended successfully",
+        user_id=str(user.id),
+        suspended_at=user.suspended_at
+    )
+
+
+@router.post("/users/{user_id}/unsuspend", response_model=UnsuspendUserResponse)
+async def unsuspend_user(
+    user_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Unsuspend (reinstate) a user (Admin or Moderator with can_manage_users permission).
+    
+    Sets user's is_suspended to False and restores access.
+    Sends notification email to user.
+    
+    Args:
+        user_id: User ID (integer as string)
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        UnsuspendUserResponse: Reinstatement confirmation
+        
+    Raises:
+        HTTPException: If user doesn't have permission or user not found
+    """
+    from app.services.email import email_service
+    from datetime import datetime
+    
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
+    
+    # Get user
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format. Expected integer."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Unsuspend user
+    user.is_suspended = False
+    user.is_active = True
+    user.suspended_at = None
+    db.commit()
+    db.refresh(user)
+    
+    unsuspended_at = datetime.utcnow()
+    
+    # Send notification email (asynchronously - don't wait for it)
+    try:
+        email_service.send_account_reinstated_email(user.email, user.username)
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Failed to send reinstatement email: {e}")
+    
+    return UnsuspendUserResponse(
+        success=True,
+        message="User reinstated successfully",
+        user_id=str(user.id),
+        unsuspended_at=unsuspended_at
+    )
+
+
+@router.post("/users/{user_id}/reset-password", response_model=ResetPasswordResponse)
+async def reset_user_password(
+    user_id: str,
+    request: ResetPasswordRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Reset user password (Admin or Moderator with can_manage_users permission).
+    
+    Accepts a new password in the request body, hashes it, and sets it immediately.
+    Sends email to user with the new password.
+    
+    Args:
+        user_id: User ID (integer as string)
+        request: Password reset request with new_password
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        ResetPasswordResponse: Password reset confirmation
+        
+    Raises:
+        HTTPException: If user doesn't have permission, user not found, or password validation fails
+    """
+    from app.services.email import email_service
+    
+    # Verify admin or moderator with manage users permission
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
+    
+    # Get user
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format. Expected integer."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Hash the new password
+    try:
+        hashed_password = get_password_hash(request.new_password)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Password hashing failed: {str(e)}"
+        )
+    
+    # Update user's password immediately
+    user.hashed_password = hashed_password
+    
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update password: {str(e)}"
+        )
+    
+    # Send notification email with the new password (asynchronously - don't wait for it)
+    try:
+        email_service.send_admin_password_reset_email(user.email, user.username, request.new_password)
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Failed to send password reset email: {e}")
+    
+    return ResetPasswordResponse(
+        success=True,
+        message="Password reset successfully. Email sent to user with new password.",
+        user_id=str(user.id)
+    )
+
+
+@router.delete("/users/{user_id}", response_model=DeleteUserResponse)
 async def delete_admin_user(
     user_id: str,
     current_user_id: str = Depends(get_current_user_id),
@@ -1192,16 +1577,30 @@ async def delete_admin_user(
     """
     Delete a user (Admin or Moderator with can_manage_users permission).
     
-    Permanently deletes a user from the database.
+    Permanently deletes a user and all associated data including:
+    - User's listings (products)
+    - User's orders/transactions
+    - User's profile data
+    - Any other associated records
+    
+    Records the deletion event in system logs for auditing purposes.
+    Sends notification email to user before deletion (if possible).
     
     Args:
         user_id: User ID (integer as string)
         current_user_id: Current authenticated user ID
         db: Database session
         
+    Returns:
+        DeleteUserResponse: Deletion confirmation
+        
     Raises:
         HTTPException: If user doesn't have permission or user not found
     """
+    from app.services.email import email_service
+    from datetime import datetime
+    import logging
+    
     # Verify admin or moderator with manage users permission
     verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
     
@@ -1229,11 +1628,211 @@ async def delete_admin_user(
             detail="Cannot delete yourself"
         )
     
-    # Delete user
-    db.delete(user)
-    db.commit()
+    # Store user info for logging and email (before deletion)
+    user_email = user.email
+    user_username = user.username
+    deleted_at = datetime.utcnow()
     
-    return None
+    # Send notification email before deletion (if possible)
+    try:
+        email_service.send_account_deleted_email(user_email, user_username)
+    except Exception as e:
+        # Log error but continue with deletion
+        print(f"Failed to send deletion email: {e}")
+    
+    # Import all related models
+    from app.models.follow import SellerFollow, ProductFollow
+    from app.models.moderator import ModeratorPermission
+    from app.models.spotlight import Spotlight, SpotlightHistory
+    from app.models.report import ProductReport
+    from app.models.user import EmailVerification, PasswordResetToken, RegistrationData
+    
+    # Get user's product IDs first
+    user_product_ids = db.query(Product.id).filter(Product.owner_id == user_id_int).all()
+    user_product_id_list = [p[0] for p in user_product_ids]
+    
+    # Helper function to safely delete records
+    def safe_delete(query_func, error_message):
+        """Safely execute a delete query, catching and logging any errors."""
+        try:
+            query_func()
+        except Exception as e:
+            # Rollback the transaction to reset the failed state
+            db.rollback()
+            error_str = str(e)
+            # Check if it's a "table does not exist" error
+            if "does not exist" in error_str.lower() or "undefinedtable" in error_str.lower():
+                logger.warning(f"Skipping deletion - table may not exist: {error_message}")
+            else:
+                logger.warning(f"Could not delete {error_message}: {error_str}")
+    
+    logger = logging.getLogger(__name__)
+    
+    # Try to delete orders (table might not exist yet)
+    try:
+        from app.models.order import Order
+        safe_delete(
+            lambda: db.query(Order).filter(Order.product_id.in_(user_product_id_list)).delete() if user_product_id_list else None,
+            "orders for user's products"
+        )
+        safe_delete(
+            lambda: db.query(Order).filter(
+                or_(Order.buyer_id == user_id_int, Order.seller_id == user_id_int)
+            ).delete(),
+            "orders where user is buyer or seller"
+        )
+    except ImportError:
+        # Order model might not be imported - that's okay
+        logger.warning("Order model not available, skipping order deletion")
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Could not delete orders: {e}")
+    
+    # Delete product follows for user's products
+    if user_product_id_list:
+        safe_delete(
+            lambda: db.query(ProductFollow).filter(ProductFollow.product_id.in_(user_product_id_list)).delete(),
+            "product follows for user's products"
+        )
+    
+    # Delete user's products (listings) - this will cascade to product-related records
+    user_products = db.query(Product).filter(Product.owner_id == user_id_int).all()
+    for product in user_products:
+        db.delete(product)
+    
+    # Delete seller follows (where user is follower or followed)
+    safe_delete(
+        lambda: db.query(SellerFollow).filter(
+            or_(SellerFollow.follower_id == user_id_int, SellerFollow.followed_user_id == user_id_int)
+        ).delete(),
+        "seller follows"
+    )
+    
+    # Delete product follows
+    safe_delete(
+        lambda: db.query(ProductFollow).filter(ProductFollow.user_id == user_id_int).delete(),
+        "product follows"
+    )
+    
+    # Delete moderator permissions
+    safe_delete(
+        lambda: db.query(ModeratorPermission).filter(ModeratorPermission.user_id == user_id_int).delete(),
+        "moderator permissions"
+    )
+    
+    # Delete spotlights where user applied them
+    try:
+        # Note: We need to handle spotlight history first as it references spotlights
+        spotlight_ids = db.query(Spotlight.id).filter(Spotlight.applied_by == user_id_int).all()
+        spotlight_id_list = [s[0] for s in spotlight_ids]
+        
+        # Delete spotlight history entries where user applied or removed
+        safe_delete(
+            lambda: db.query(SpotlightHistory).filter(
+                or_(
+                    SpotlightHistory.applied_by == user_id_int,
+                    SpotlightHistory.removed_by == user_id_int
+                )
+            ).delete(),
+            "spotlight history (applied/removed by user)"
+        )
+        
+        # Delete spotlight history entries that reference spotlights created by this user
+        if spotlight_id_list:
+            safe_delete(
+                lambda: db.query(SpotlightHistory).filter(
+                    SpotlightHistory.spotlight_id.in_(spotlight_id_list)
+                ).delete(),
+                "spotlight history (for user's spotlights)"
+            )
+        
+        # Delete spotlight history entries for user's products
+        if user_product_id_list:
+            safe_delete(
+                lambda: db.query(SpotlightHistory).filter(
+                    SpotlightHistory.product_id.in_(user_product_id_list)
+                ).delete(),
+                "spotlight history (for user's products)"
+            )
+        
+        # Delete spotlights
+        safe_delete(
+            lambda: db.query(Spotlight).filter(Spotlight.applied_by == user_id_int).delete(),
+            "spotlights (applied by user)"
+        )
+        
+        # Delete spotlights for user's products
+        if user_product_id_list:
+            safe_delete(
+                lambda: db.query(Spotlight).filter(Spotlight.product_id.in_(user_product_id_list)).delete(),
+                "spotlights (for user's products)"
+            )
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Error during spotlight deletion: {e}")
+    
+    # Delete product reports by this user
+    safe_delete(
+        lambda: db.query(ProductReport).filter(ProductReport.user_id == user_id_int).delete(),
+        "product reports by user"
+    )
+    
+    # Delete product reports about user's products
+    if user_product_id_list:
+        safe_delete(
+            lambda: db.query(ProductReport).filter(ProductReport.product_id.in_(user_product_id_list)).delete(),
+            "product reports about user's products"
+        )
+    
+    # Delete email verifications
+    safe_delete(
+        lambda: db.query(EmailVerification).filter(EmailVerification.email == user_email).delete(),
+        "email verifications"
+    )
+    
+    # Delete password reset tokens
+    safe_delete(
+        lambda: db.query(PasswordResetToken).filter(PasswordResetToken.email == user_email).delete(),
+        "password reset tokens"
+    )
+    
+    # Delete registration data
+    safe_delete(
+        lambda: db.query(RegistrationData).filter(RegistrationData.email == user_email).delete(),
+        "registration data"
+    )
+    
+    # Finally, delete the user (this is the critical operation)
+    try:
+        db.delete(user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        error_msg = str(e)
+        logger.error(
+            f"Failed to delete user {user_id_int}: {error_msg}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Cannot perform this operation due to related records: {error_msg}"
+        )
+    
+    # Log deletion event for auditing
+    logger = logging.getLogger(__name__)
+    logger.info(
+        f"User deleted - User ID: {user_id_int}, "
+        f"Email: {user_email}, "
+        f"Username: {user_username}, "
+        f"Deleted by: {current_user_id}, "
+        f"Deleted at: {deleted_at.isoformat()}"
+    )
+    
+    return DeleteUserResponse(
+        success=True,
+        message="User deleted successfully",
+        user_id=str(user_id_int),
+        deleted_at=deleted_at
+    )
 
 
 @router.get("/reports", response_model=ReportedProductListResponse)

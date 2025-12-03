@@ -78,7 +78,14 @@ async def login(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is deactivated"
+            detail="Account is suspended or inactive. Please contact support."
+        )
+    
+    # Check if user is suspended
+    if hasattr(user, 'is_suspended') and user.is_suspended:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is suspended. Please contact support for assistance."
         )
     
     # Verify password
@@ -87,6 +94,13 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
+    
+    # Update last_login timestamp
+    from datetime import datetime
+    if hasattr(user, 'last_login'):
+        user.last_login = datetime.utcnow()
+        db.commit()
+        db.refresh(user)
     
     # Generate JWT token
     token_response = create_token_response(str(user.id))
@@ -406,7 +420,7 @@ async def verify_password_reset(
             if not user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Account is deactivated"
+                    detail="Account is suspended or inactive. Please contact support."
                 )
 
             # Verify current password

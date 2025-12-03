@@ -150,7 +150,7 @@ class SpotlightService:
         history = SpotlightHistory(
             spotlight_id=None,  # Will be updated after flush
             product_id=product_id,
-            action="applied",
+            action="active",
             applied_by=admin_user_id,
             removed_by=None,
             start_time=start_time,
@@ -232,7 +232,7 @@ class SpotlightService:
         product = self.db.query(Product).filter(Product.id == product_id).first()
         
         # Update spotlight status
-        spotlight.status = "removed"
+        spotlight.status = "expired"
         
         # Update product
         product.is_spotlighted = False
@@ -242,7 +242,7 @@ class SpotlightService:
         history = SpotlightHistory(
             spotlight_id=spotlight.id,
             product_id=product_id,
-            action="removed",
+            action="expired",
             applied_by=spotlight.applied_by,
             removed_by=admin_user_id,
             start_time=spotlight.start_time,
@@ -329,7 +329,7 @@ class SpotlightService:
             page: Page number
             page_size: Items per page
             product_id: Filter by product ID
-            status: Filter by action (applied, expired, removed)
+            status: Filter by action (applied, expired, removed is also expired)
             date_from: Filter from date
             date_to: Filter to date
             

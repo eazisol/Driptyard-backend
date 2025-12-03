@@ -46,7 +46,9 @@ class ReportedProductResponse(BaseModel):
     latest_report_status: str = Field(..., description="Status of the most recent report")
     latest_report_created_at: datetime = Field(..., description="Creation time of the most recent report")
     first_reported_at: datetime = Field(..., description="When the product was first reported")
-
+    latest_report_user_id: Optional[str] = Field(None, description="User ID who made the latest report")
+    latest_report_user_username: Optional[str] = Field(None, description="Username who made the latest report")
+    product_owner_username: Optional[str] = Field(None, description="Username of the product owner")
 
 class ReportedProductListResponse(BaseModel):
     """Schema for paginated list of reported products."""

@@ -30,6 +30,9 @@ class User(UserProductBaseModel):
     is_verified = Column(Boolean, default=False, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
     is_moderator = Column(Boolean, default=False, nullable=False)
+    is_suspended = Column(Boolean, default=False, nullable=False, index=True)
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     
     # Profile information
     first_name = Column(String(100), nullable=True)
