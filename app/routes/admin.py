@@ -2836,6 +2836,9 @@ async def get_audit_logs(
         date=parsed_date
     )
     
+    # Get all unique actions for dropdown filter
+    available_actions = service.get_all_unique_actions()
+    
     # Calculate pagination
     total_pages = math.ceil(total / page_size) if total > 0 else 0
     
@@ -2862,5 +2865,6 @@ async def get_audit_logs(
         total=total,
         page=page,
         page_size=page_size,
-        total_pages=total_pages
+        total_pages=total_pages,
+        available_actions=available_actions
     )

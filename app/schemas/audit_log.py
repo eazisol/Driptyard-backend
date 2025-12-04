@@ -34,6 +34,7 @@ class AuditLogListResponse(BaseModel):
     page: int = Field(..., description="Current page number")
     page_size: int = Field(..., description="Items per page")
     total_pages: int = Field(..., description="Total number of pages")
+    available_actions: list[str] = Field(default_factory=list, description="List of all available action names for filtering")
     
     class Config:
         from_attributes = True

@@ -176,4 +176,18 @@ class AuditLogService:
         logs = query.order_by(desc(AuditLog.created_at)).offset(offset).limit(page_size).all()
         
         return logs, total
+    
+    def get_all_unique_actions(self) -> list[str]:
+        """
+        Get all unique action names from audit logs.
+        
+        Returns:
+            list[str]: List of all distinct action names
+        """
+        distinct_actions = self.db.query(
+            func.distinct(AuditLog.action)
+        ).order_by(AuditLog.action).all()
+        
+        # Extract action names from query results
+        return [action[0] for action in distinct_actions if action[0]]
 
