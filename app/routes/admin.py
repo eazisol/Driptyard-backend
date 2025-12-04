@@ -5,8 +5,8 @@ This module contains admin-only endpoints for managing the platform.
 """
 
 from datetime import datetime, timedelta, date
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Optional, List, Annotated
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, cast, Date
 from sqlalchemy.exc import IntegrityError
@@ -50,8 +50,13 @@ from app.schemas.spotlight import (
     ActiveSpotlightListResponse,
     SpotlightHistoryListResponse
 )
+from app.schemas.audit_log import (
+    AuditLogResponse,
+    AuditLogListResponse
+)
 from app.services.report import ProductReportService
 from app.services.spotlight import SpotlightService
+from app.services.audit_log import AuditLogService
 
 router = APIRouter()
 
@@ -290,6 +295,51 @@ def verify_admin_or_moderator_with_flagged_content_permission(current_user_id: s
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You do not have permission to access flagged content"
     )
+
+
+def log_audit_action(
+    db: Session,
+    performed_by_id: int,
+    action: str,
+    action_type: str,
+    target_type: str,
+    target_id: str,
+    target_identifier: Optional[str] = None,
+    details: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> None:
+    """
+    Helper function to log audit actions.
+    
+    Args:
+        db: Database session
+        performed_by_id: ID of the admin/moderator performing the action
+        action: Action description
+        action_type: Type of action category
+        target_type: Type of target
+        target_id: ID of the target
+        target_identifier: Human-readable identifier
+        details: Additional context
+        ip_address: IP address of the requester
+        user_agent: User agent string
+    """
+    try:
+        audit_service = AuditLogService(db)
+        audit_service.log_action(
+            performed_by_id=performed_by_id,
+            action=action,
+            action_type=action_type,
+            target_type=target_type,
+            target_id=target_id,
+            target_identifier=target_identifier,
+            details=details,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        logging.error(f"Failed to log audit action: {e}")
 
 
 def calculate_percentage_change(current: float, previous: float) -> float:
@@ -802,6 +852,21 @@ async def update_admin_product(
     db.commit()
     db.refresh(product)
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Updated Listing",
+            action_type="product",
+            target_type="product",
+            target_id=str(product.id),
+            target_identifier=product.title
+        )
+    except Exception as e:
+        logging.error(f"Failed to log update product action: {e}")
+    
     # Get category name from relationship
     category_name = product.category.name if product.category else None
     
@@ -862,9 +927,28 @@ async def delete_admin_product(
             detail="Product not found"
         )
     
+    # Store product info for audit log
+    product_title = product.title
+    product_id_str = str(product.id)
+    
     # Delete product
     db.delete(product)
     db.commit()
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Removed Listing",
+            action_type="product",
+            target_type="product",
+            target_id=product_id_str,
+            target_identifier=product_title
+        )
+    except Exception as e:
+        logging.error(f"Failed to log delete product action: {e}")
     
     return None
 
@@ -1183,6 +1267,21 @@ async def update_admin_user(
         Product.is_active == True
     ).scalar() or 0
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Updated User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log update user action: {e}")
+    
     return AdminUserResponse(
         id=str(user.id),
         user_id=str(user.id),
@@ -1261,6 +1360,21 @@ async def ban_admin_user(
     db.commit()
     db.refresh(user)
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Banned User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log ban action: {e}")
+    
     return AdminUserResponse(
         id=str(user.id),
         email=user.email,
@@ -1323,6 +1437,21 @@ async def unban_admin_user(
     user.is_active = True
     db.commit()
     db.refresh(user)
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Unbanned User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log unban action: {e}")
     
     return AdminUserResponse(
         id=str(user.id),
@@ -1407,6 +1536,21 @@ async def suspend_user(
         # Log error but don't fail the request
         print(f"Failed to send suspension email: {e}")
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Suspended User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log suspend action: {e}")
+    
     return SuspendUserResponse(
         success=True,
         message="User suspended successfully",
@@ -1476,6 +1620,21 @@ async def unsuspend_user(
     except Exception as e:
         # Log error but don't fail the request
         print(f"Failed to send reinstatement email: {e}")
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Unsuspended User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log unsuspend action: {e}")
     
     return UnsuspendUserResponse(
         success=True,
@@ -1560,6 +1719,21 @@ async def reset_user_password(
     except Exception as e:
         # Log error but don't fail the request
         print(f"Failed to send password reset email: {e}")
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Reset Password",
+            action_type="user",
+            target_type="user",
+            target_id=str(user.id),
+            target_identifier=user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log reset password action: {e}")
     
     return ResetPasswordResponse(
         success=True,
@@ -1827,6 +2001,21 @@ async def delete_admin_user(
         f"Deleted at: {deleted_at.isoformat()}"
     )
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Deleted User",
+            action_type="user",
+            target_type="user",
+            target_id=str(user_id_int),
+            target_identifier=user_username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log delete user action: {e}")
+    
     return DeleteUserResponse(
         success=True,
         message="User deleted successfully",
@@ -1970,8 +2159,45 @@ async def approve_report(
     # Verify admin or moderator with manage flagged content permission
     verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
+    # Get report and product info for audit logging
+    try:
+        report_id_int = int(report_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid report ID format. Expected integer ID."
+        )
+    
+    report = db.query(ProductReport).filter(ProductReport.id == report_id_int).first()
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    product = db.query(Product).filter(Product.id == report.product_id).first()
+    product_title = product.title if product else f"Product #{report.product_id}"
+    
     service = ProductReportService(db)
-    return service.approve_report(report_id)
+    result = service.approve_report(report_id)
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Approved Report",
+            action_type="report",
+            target_type="product",
+            target_id=str(report.product_id),
+            target_identifier=product_title,
+            details=f"Report #{report_id} approved, product deactivated"
+        )
+    except Exception as e:
+        logging.error(f"Failed to log approve report action: {e}")
+    
+    return result
 
 
 @router.post("/reports/{report_id}/reject", status_code=status.HTTP_200_OK)
@@ -2001,8 +2227,45 @@ async def reject_report(
     # Verify admin or moderator with manage flagged content permission
     verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
+    # Get report and product info for audit logging
+    try:
+        report_id_int = int(report_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid report ID format. Expected integer ID."
+        )
+    
+    report = db.query(ProductReport).filter(ProductReport.id == report_id_int).first()
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    product = db.query(Product).filter(Product.id == report.product_id).first()
+    product_title = product.title if product else f"Product #{report.product_id}"
+    
     service = ProductReportService(db)
-    return service.reject_report(report_id)
+    result = service.reject_report(report_id)
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Rejected Report",
+            action_type="report",
+            target_type="product",
+            target_id=str(report.product_id),
+            target_identifier=product_title,
+            details=f"Report #{report_id} rejected and deleted"
+        )
+    except Exception as e:
+        logging.error(f"Failed to log reject report action: {e}")
+    
+    return result
 
 @router.post("/reports/{report_id}/review", status_code=status.HTTP_200_OK)
 async def review_report(
@@ -2030,8 +2293,45 @@ async def review_report(
     # Verify admin or moderator with manage flagged content permission
     verify_admin_or_moderator_with_flagged_content_permission(current_user_id, db, require_manage=True)
     
+    # Get report and product info for audit logging
+    try:
+        report_id_int = int(report_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid report ID format. Expected integer ID."
+        )
+    
+    report = db.query(ProductReport).filter(ProductReport.id == report_id_int).first()
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    product = db.query(Product).filter(Product.id == report.product_id).first()
+    product_title = product.title if product else f"Product #{report.product_id}"
+    
     service = ProductReportService(db)
-    return service.review_report(report_id)
+    result = service.review_report(report_id)
+    
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action="Reviewed Report",
+            action_type="report",
+            target_type="product",
+            target_id=str(report.product_id),
+            target_identifier=product_title,
+            details=f"Report #{report_id} reviewed, product reactivated"
+        )
+    except Exception as e:
+        logging.error(f"Failed to log review report action: {e}")
+    
+    return result
 
 
 @router.post("/products/{product_id}/spotlight", response_model=SpotlightResponse, status_code=status.HTTP_201_CREATED)
@@ -2091,14 +2391,34 @@ async def apply_spotlight(
             detail="Invalid product ID format. Expected integer ID."
         )
     
+    # Get product for audit logging
+    product = db.query(Product).filter(Product.id == product_id_int).first()
+    product_title = product.title if product else f"Product #{product_id}"
+    
     # Apply spotlight (service will check specific permissions)
     service = SpotlightService(db)
-    return service.apply_spotlight(
+    result = service.apply_spotlight(
         product_id=product_id_int,
         admin_user_id=user_id_int,
         duration_hours=request.duration_hours,
         custom_end_time=request.custom_end_time
     )
+    
+    # Log audit action
+    try:
+        log_audit_action(
+            db=db,
+            performed_by_id=user_id_int,
+            action="Applied Spotlight",
+            action_type="spotlight",
+            target_type="product",
+            target_id=str(product_id_int),
+            target_identifier=product_title
+        )
+    except Exception as e:
+        logging.error(f"Failed to log apply spotlight action: {e}")
+    
+    return result
 
 
 @router.delete("/products/{product_id}/spotlight", status_code=status.HTTP_200_OK)
@@ -2156,12 +2476,32 @@ async def remove_spotlight(
             detail="Invalid product ID format. Expected integer ID."
         )
     
+    # Get product for audit logging
+    product = db.query(Product).filter(Product.id == product_id_int).first()
+    product_title = product.title if product else f"Product #{product_id}"
+    
     # Remove spotlight (service will check specific permissions)
     service = SpotlightService(db)
-    return service.remove_spotlight(
+    result = service.remove_spotlight(
         product_id=product_id_int,
         admin_user_id=user_id_int
     )
+    
+    # Log audit action
+    try:
+        log_audit_action(
+            db=db,
+            performed_by_id=user_id_int,
+            action="Removed Spotlight",
+            action_type="spotlight",
+            target_type="product",
+            target_id=str(product_id_int),
+            target_identifier=product_title
+        )
+    except Exception as e:
+        logging.error(f"Failed to log remove spotlight action: {e}")
+    
+    return result
 
 
 @router.get("/spotlight/active", response_model=ActiveSpotlightListResponse)
@@ -2360,6 +2700,21 @@ async def create_user(
         user_type_name = "customer"
     success_message = f"{user_type_name.capitalize()} created successfully"
     
+    # Log audit action
+    try:
+        performed_by_id_int = int(current_user_id)
+        log_audit_action(
+            db=db,
+            performed_by_id=performed_by_id_int,
+            action=f"Created {user_type_name.capitalize()}",
+            action_type="user",
+            target_type="user",
+            target_id=str(new_user.id),
+            target_identifier=new_user.username
+        )
+    except Exception as e:
+        logging.error(f"Failed to log create user action: {e}")
+    
     return AdminUserCreateResponse(
         id=str(new_user.id),
         email=new_user.email,
@@ -2372,4 +2727,140 @@ async def create_user(
         is_admin=new_user.is_admin,
         created_at=new_user.created_at,
         message=success_message
+    )
+
+
+@router.get("/logs", response_model=AuditLogListResponse)
+async def get_audit_logs(
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    action_type: Optional[str] = Query(None, description="Filter by action type (user, product, spotlight, moderator, report)"),
+    target_type: Optional[str] = Query(None, description="Filter by target type (user, product, spotlight, moderator)"),
+    performed_by_id: Optional[int] = Query(None, description="Filter by admin/moderator ID"),
+    search: Optional[str] = Query(None, description="Search in action, target, or admin username"),
+    date_from: Optional[datetime] = Query(None, description="Filter logs from this date (ISO format)"),
+    date_to: Optional[datetime] = Query(None, description="Filter logs to this date (ISO format)"),
+    role: Optional[str] = Query(None, description="Filter by role: 'admin' or 'moderator'"),
+    is_admin: Optional[bool] = Query(None, description="Filter by role: true for admin, false for moderator"),
+    action: Optional[str] = Query(None, description="Filter by specific action name (e.g., 'Applied Spotlight', 'Updated Listing')"),
+    date: Annotated[Optional[str], Query(
+        description="Filter by specific date. Accepts YYYY-MM-DD format (e.g., 2025-12-05) or ISO datetime format"
+    )] = None
+):
+    """
+    Get audit logs with filtering and pagination (Admin or Moderator with dashboard permission).
+    
+    Returns a paginated list of audit log entries showing all admin and moderator actions.
+    Supports filtering by role, action, date, action type, target type, performer, and search.
+    
+    Args:
+        current_user_id: Current authenticated user ID
+        db: Database session
+        page: Page number (starts from 1)
+        page_size: Number of items per page
+        action_type: Filter by action type (user, product, spotlight, moderator, report)
+        target_type: Filter by target type (user, product, spotlight, moderator)
+        performed_by_id: Filter by admin/moderator ID
+        search: Search term for action, target, or admin username
+        date_from: Filter logs from this date (ISO format)
+        date_to: Filter logs to this date (ISO format)
+        role: Filter by role - 'admin' or 'moderator' (alternative to is_admin)
+        is_admin: Filter by role - true for admin, false for moderator (takes precedence over role)
+        action: Filter by specific action name (e.g., 'Applied Spotlight', 'Updated Listing', 'Suspended User')
+        date: Filter by specific date (filters logs on that exact date)
+        
+    Returns:
+        AuditLogListResponse: Paginated list of audit logs
+        
+    Raises:
+        HTTPException: If user doesn't have permission
+    """
+    import math
+    
+    # Verify admin or moderator with dashboard permission
+    verify_admin_or_moderator_with_dashboard_permission(current_user_id, db)
+    
+    # Determine role filter - is_admin takes precedence over role parameter
+    is_admin_filter = None
+    if is_admin is not None:
+        # Use is_admin boolean parameter directly (FastAPI parses query params automatically)
+        is_admin_filter = is_admin
+    elif role:
+        # Convert role string to boolean
+        role_lower = role.lower()
+        if role_lower == "admin":
+            is_admin_filter = True
+        elif role_lower == "moderator":
+            is_admin_filter = False
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role. Must be 'admin' or 'moderator'"
+            )
+    
+    # Parse date parameter (can be YYYY-MM-DD or full datetime)
+    parsed_date = None
+    if date:
+        try:
+            # Try parsing as date-only first (YYYY-MM-DD)
+            if len(date) == 10 and date.count('-') == 2:
+                # Date-only format: YYYY-MM-DD
+                from datetime import date as date_type
+                date_obj = date_type.fromisoformat(date)
+                # Convert to datetime at start of day
+                parsed_date = datetime.combine(date_obj, datetime.min.time())
+            else:
+                # Full datetime format
+                parsed_date = datetime.fromisoformat(date.replace('Z', '+00:00'))
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid date format. Use YYYY-MM-DD or ISO datetime format. Error: {str(e)}"
+            )
+    
+    # Get audit logs
+    service = AuditLogService(db)
+    logs, total = service.get_audit_logs(
+        page=page,
+        page_size=page_size,
+        action_type=action_type,
+        target_type=target_type,
+        performed_by_id=performed_by_id,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        is_admin=is_admin_filter,
+        action=action,
+        date=parsed_date
+    )
+    
+    # Calculate pagination
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+    
+    # Convert to response format
+    log_list = []
+    for log in logs:
+        # Determine if performer is admin (True) or moderator (False)
+        is_admin_performer = log.is_admin == "admin"
+        
+        log_list.append(AuditLogResponse(
+            id=str(log.id),
+            timestamp=log.created_at,
+            admin=log.performed_by_username,
+            is_admin=is_admin_performer,
+            action=log.action,
+            target=log.target_identifier or log.target_id,
+            target_type=log.target_type,
+            action_type=log.action_type,
+            details=log.details
+        ))
+    
+    return AuditLogListResponse(
+        logs=log_list,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
     )
