@@ -16,6 +16,7 @@ from app.models.category import (
 from app.models.report import ReportStatus, ProductReport
 from app.models.follow import SellerFollow, ProductFollow
 from app.models.audit_log import AuditLog
+from app.models.search import UserRecentSearch, SearchAnalytics
 
 # Placeholder imports for future models
 # from app.models.product import Product
@@ -36,6 +37,8 @@ __all__ = [
     "SellerFollow",
     "ProductFollow",
     "AuditLog",
+    "UserRecentSearch",
+    "SearchAnalytics",
     # "Product",
     # "Order",
 ]
