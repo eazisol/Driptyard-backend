@@ -316,3 +316,204 @@ class DeleteUserResponse(BaseModel):
     user_id: str = Field(..., description="User ID")
     deleted_at: datetime = Field(..., description="Deletion timestamp")
 
+
+# ============================================================================
+# BULK ACTION SCHEMAS
+# ============================================================================
+
+class BulkDeleteUsersRequest(BaseModel):
+    """Schema for bulk delete users request."""
+    
+    user_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of user IDs to delete")
+    
+    @field_validator('user_ids')
+    @classmethod
+    def validate_user_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('user_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot delete more than 100 users at once')
+        for user_id in v:
+            if user_id <= 0:
+                raise ValueError('All user IDs must be positive integers')
+        return v
+
+
+class BulkDeleteUsersResponse(BaseModel):
+    """Schema for bulk delete users response."""
+    
+    message: str = Field(..., description="Success message")
+    deleted_count: int = Field(..., description="Number of users deleted")
+    deleted_ids: List[int] = Field(..., description="List of deleted user IDs")
+
+
+class BulkUpdateUserStatusRequest(BaseModel):
+    """Schema for bulk update user status request."""
+    
+    user_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of user IDs to update")
+    is_active: bool = Field(..., description="Active status to set")
+    
+    @field_validator('user_ids')
+    @classmethod
+    def validate_user_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('user_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot update more than 100 users at once')
+        for user_id in v:
+            if user_id <= 0:
+                raise ValueError('All user IDs must be positive integers')
+        return v
+
+
+class BulkUpdateUserStatusResponse(BaseModel):
+    """Schema for bulk update user status response."""
+    
+    message: str = Field(..., description="Success message")
+    updated_count: int = Field(..., description="Number of users updated")
+    updated_ids: List[int] = Field(..., description="List of updated user IDs")
+    is_active: bool = Field(..., description="New active status")
+
+
+class BulkDeleteProductsRequest(BaseModel):
+    """Schema for bulk delete products request."""
+    
+    product_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of product IDs to delete")
+    
+    @field_validator('product_ids')
+    @classmethod
+    def validate_product_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('product_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot delete more than 100 products at once')
+        for product_id in v:
+            if product_id <= 0:
+                raise ValueError('All product IDs must be positive integers')
+        return v
+
+
+class BulkDeleteProductsResponse(BaseModel):
+    """Schema for bulk delete products response."""
+    
+    message: str = Field(..., description="Success message")
+    deleted_count: int = Field(..., description="Number of products deleted")
+    deleted_ids: List[int] = Field(..., description="List of deleted product IDs")
+
+
+class BulkUpdateProductStatusRequest(BaseModel):
+    """Schema for bulk update product status request."""
+    
+    product_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of product IDs to update")
+    is_active: bool = Field(..., description="Active status to set")
+    
+    @field_validator('product_ids')
+    @classmethod
+    def validate_product_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('product_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot update more than 100 products at once')
+        for product_id in v:
+            if product_id <= 0:
+                raise ValueError('All product IDs must be positive integers')
+        return v
+
+
+class BulkUpdateProductStatusResponse(BaseModel):
+    """Schema for bulk update product status response."""
+    
+    message: str = Field(..., description="Success message")
+    updated_count: int = Field(..., description="Number of products updated")
+    updated_ids: List[int] = Field(..., description="List of updated product IDs")
+    is_active: bool = Field(..., description="New active status")
+
+
+class BulkUpdateProductVerificationRequest(BaseModel):
+    """Schema for bulk update product verification request."""
+    
+    product_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of product IDs to update")
+    is_verified: bool = Field(..., description="Verification status to set")
+    
+    @field_validator('product_ids')
+    @classmethod
+    def validate_product_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('product_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot update more than 100 products at once')
+        for product_id in v:
+            if product_id <= 0:
+                raise ValueError('All product IDs must be positive integers')
+        return v
+
+
+class BulkUpdateProductVerificationResponse(BaseModel):
+    """Schema for bulk update product verification response."""
+    
+    message: str = Field(..., description="Success message")
+    updated_count: int = Field(..., description="Number of products updated")
+    updated_ids: List[int] = Field(..., description="List of updated product IDs")
+    is_verified: bool = Field(..., description="New verification status")
+
+
+class BulkApproveReportsRequest(BaseModel):
+    """Schema for bulk approve reports request."""
+    
+    report_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of report IDs to approve")
+    
+    @field_validator('report_ids')
+    @classmethod
+    def validate_report_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('report_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot approve more than 100 reports at once')
+        for report_id in v:
+            if report_id <= 0:
+                raise ValueError('All report IDs must be positive integers')
+        return v
+
+
+class BulkApproveReportsResponse(BaseModel):
+    """Schema for bulk approve reports response."""
+    
+    message: str = Field(..., description="Success message")
+    approved_count: int = Field(..., description="Number of reports approved")
+    approved_ids: List[int] = Field(..., description="List of approved report IDs")
+    status: str = Field("approved", description="New status of reports")
+
+
+class BulkRejectReportsRequest(BaseModel):
+    """Schema for bulk reject reports request."""
+    
+    report_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of report IDs to reject")
+    
+    @field_validator('report_ids')
+    @classmethod
+    def validate_report_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('report_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot reject more than 100 reports at once')
+        for report_id in v:
+            if report_id <= 0:
+                raise ValueError('All report IDs must be positive integers')
+        return v
+
+
+class BulkRejectReportsResponse(BaseModel):
+    """Schema for bulk reject reports response."""
+    
+    message: str = Field(..., description="Success message")
+    rejected_count: int = Field(..., description="Number of reports rejected")
+    rejected_ids: List[int] = Field(..., description="List of rejected report IDs")
+    status: str = Field("rejected", description="New status of reports")
+
