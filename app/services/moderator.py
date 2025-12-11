@@ -162,9 +162,15 @@ class ModeratorService:
                 is_active=moderator.is_active,
                 is_verified=moderator.is_verified,
                 is_moderator=moderator.is_moderator,
+                is_banned=not moderator.is_active,
+                is_suspended=moderator.is_suspended if hasattr(moderator, 'is_suspended') else False,
                 avatar_url=moderator.avatar_url,
                 permissions=permissions_response,
                 created_at=moderator.created_at
+
+
+
+        
             ))
         
         return ModeratorListResponse(
@@ -239,6 +245,8 @@ class ModeratorService:
             is_active=user.is_active,
             is_verified=user.is_verified,
             is_moderator=user.is_moderator,
+            is_banned=not user.is_active,
+            is_suspended=user.is_suspended if hasattr(user, 'is_suspended') else False,
             avatar_url=user.avatar_url,
             permissions=permissions_response,
             created_at=user.created_at
@@ -338,6 +346,8 @@ class ModeratorService:
             country_code=user.country_code,
             is_active=user.is_active,
             is_verified=user.is_verified,
+            is_banned=not user.is_active,
+            is_suspended=user.is_suspended if hasattr(user, 'is_suspended') else False,
             is_moderator=user.is_moderator,
             avatar_url=user.avatar_url,
             permissions=permissions_response,

@@ -15,6 +15,7 @@ import re
 import logging
 
 from app.database import get_db
+from app.models.audit_log import AuditLog
 from app.security import get_current_user_id, get_password_hash
 from app.models.user import User
 from app.models.product import Product
@@ -53,7 +54,9 @@ from app.schemas.admin import (
     BulkApproveReportsRequest,
     BulkApproveReportsResponse,
     BulkRejectReportsRequest,
-    BulkRejectReportsResponse
+    BulkRejectReportsResponse,
+    BulkSuspendUsersRequest,
+    BulkSuspendUsersResponse,
 )
 from app.schemas.report import (
     ReportedProductListResponse,
@@ -432,6 +435,71 @@ def generate_chart_data(db: Session, model_class, date_column, days: int = 30) -
     return chart_data
 
 
+def generate_user_chart_data(db: Session, days: int = 30) -> List[ChartDataPoint]:
+    """
+    Generate chart data for users for the last N days, excluding admins and moderators.
+    
+    Args:
+        db: Database session
+        days: Number of days to include (default 30)
+        
+    Returns:
+        List[ChartDataPoint]: List of chart data points with daily counts and cumulative totals
+    """
+    # Calculate date range
+    end_date = datetime.utcnow().date()
+    start_date = end_date - timedelta(days=days - 1)
+    
+    # Query daily counts - cast timestamp to date for grouping, excluding admins and moderators
+    daily_counts = db.query(
+        func.date(User.created_at).label('date'),
+        func.count(User.id).label('count')
+    ).filter(
+        and_(
+            func.date(User.created_at) >= start_date,
+            func.date(User.created_at) <= end_date,
+            User.is_admin == False,
+            User.is_moderator == False
+        )
+    ).group_by(
+        func.date(User.created_at)
+    ).order_by(
+        func.date(User.created_at)
+    ).all()
+    
+    # Create a dictionary of date -> count
+    counts_dict = {row.date: row.count for row in daily_counts}
+    
+    # Generate all dates in range and fill missing dates with 0
+    chart_data = []
+    cumulative = 0
+    
+    # Get total count before the date range for cumulative calculation (excluding admins and moderators)
+    total_before = db.query(func.count(User.id)).filter(
+        and_(
+            func.date(User.created_at) < start_date,
+            User.is_admin == False,
+            User.is_moderator == False
+        )
+    ).scalar() or 0
+    cumulative = total_before
+    
+    current_date = start_date
+    while current_date <= end_date:
+        count = counts_dict.get(current_date, 0)
+        cumulative += count
+        
+        chart_data.append(ChartDataPoint(
+            date=current_date.strftime('%Y-%m-%d'),
+            count=count,
+            cumulative=cumulative
+        ))
+        
+        current_date += timedelta(days=1)
+    
+    return chart_data
+
+
 @router.get("/stats/overview", response_model=StatsOverviewResponse)
 async def get_stats_overview(
     current_user_id: str = Depends(get_current_user_id),
@@ -468,19 +536,31 @@ async def get_stats_overview(
     
     last_month_end = current_month_start - timedelta(seconds=1)
     
-    # Total Users: Count of all users
-    total_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
-    
-    # Users for current month
-    current_month_users = db.query(func.count(User.id)).filter(
-        User.created_at >= current_month_start
+    # Total Users: Count of all users (excluding admins and moderators)
+    total_users = db.query(func.count(User.id)).filter(
+        and_(
+            User.is_active == True,
+            User.is_admin == False,
+            User.is_moderator == False
+        )
     ).scalar() or 0
     
-    # Users for last month
+    # Users for current month (excluding admins and moderators)
+    current_month_users = db.query(func.count(User.id)).filter(
+        and_(
+            User.created_at >= current_month_start,
+            User.is_admin == False,
+            User.is_moderator == False
+        )
+    ).scalar() or 0
+    
+    # Users for last month (excluding admins and moderators)
     last_month_users = db.query(func.count(User.id)).filter(
         and_(
             User.created_at >= last_month_start,
-            User.created_at <= last_month_end
+            User.created_at <= last_month_end,
+            User.is_admin == False,
+            User.is_moderator == False
         )
     ).scalar() or 0
     
@@ -607,24 +687,24 @@ async def get_stats_overview(
         flagged_content = []
     
     # Total Listings Removed: Count of product_reports with status_id = 3 (approved/removed)
-    total_listings_removed = db.query(func.count(ProductReport.id)).filter(
-        ProductReport.status_id == 3
+    total_listings_removed = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == 'Removed Listing'
     ).scalar() or 0
     
     # Listings removed for current month (reports with status_id = 3 created this month)
-    current_month_removed = db.query(func.count(ProductReport.id)).filter(
+    current_month_removed = db.query(func.count(AuditLog.id)).filter(
         and_(
-            ProductReport.status_id == 3,
-            ProductReport.created_at >= current_month_start
+            AuditLog.action == 'Removed Listing',
+            AuditLog.created_at >= current_month_start
         )
     ).scalar() or 0
     
     # Listings removed for last month (reports with status_id = 3 created last month)
-    last_month_removed = db.query(func.count(ProductReport.id)).filter(
+    last_month_removed = db.query(func.count(AuditLog.id)).filter(
         and_(
-            ProductReport.status_id == 3,
-            ProductReport.created_at >= last_month_start,
-            ProductReport.created_at <= last_month_end
+            AuditLog.action == 'Removed Listing',
+            AuditLog.created_at >= last_month_start,
+            AuditLog.created_at <= last_month_end
         )
     ).scalar() or 0
     
@@ -632,7 +712,7 @@ async def get_stats_overview(
     listings_removed_change = calculate_percentage_change(current_month_removed, last_month_removed)
     
     # Generate chart data for the last 30 days
-    users_growth_data = generate_chart_data(db, User, User.created_at, days=30)
+    users_growth_data = generate_user_chart_data(db, days=30)
     products_growth_data = generate_chart_data(db, Product, Product.created_at, days=30)
     
     return StatsOverviewResponse(
@@ -1159,7 +1239,11 @@ async def update_admin_product(
     
     if "is_flagged" in update_dict:
         product.is_flagged = update_dict["is_flagged"]
-    
+
+    if update_dict["is_verified"] is False:
+        product.is_spotlighted = False
+    print(update_dict["is_verified"])
+
     if "stock_status" in update_dict:
         # Validate stock_status
         valid_statuses = ["In Stock", "Out of Stock", "Limited"]
@@ -1411,6 +1495,8 @@ async def list_admin_users(
             query = query.filter(User.is_active == True)
         elif status.lower() == "inactive":
             query = query.filter(User.is_active == False)
+        elif status.lower() == "isSuspend":
+            query = query.filter(User.is_suspended == True)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1736,6 +1822,80 @@ async def bulk_update_user_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Bulk update operation failed: {str(e)}"
         )
+
+@router.put("/users/bulk/suspend", response_model=BulkSuspendUsersResponse)
+async def bulk_suspend_users(
+    request_data: BulkSuspendUsersRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk suspend users (Admin or Moderator with can_manage_users permission).
+    
+    Suspends multiple users by setting is_active = False.
+    """
+
+    # Verify admin or moderator permissions
+    verify_admin_or_moderator_with_users_permission(current_user_id, db, require_manage=True)
+    
+    user_ids = request_data.user_ids
+    is_suspended = request_data.is_suspended
+    updated_ids = []
+    not_found_ids = []
+
+    # Validate all users exist
+    for user_id in user_ids:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            not_found_ids.append(user_id)
+
+    if not_found_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"One or more users not found: {not_found_ids}"
+        )
+
+    try:
+        # Suspend users
+        for user_id in user_ids:
+            user = db.query(User).filter(User.id == user_id).first()
+            # user.is_active = is_suspended
+            user.is_suspended = is_suspended
+            updated_ids.append(user_id)
+
+        db.commit()
+
+        # Log audit action
+        try:
+            log_audit_action(
+                db=db,
+                performed_by_id=int(current_user_id),
+                action="Bulk Suspend Users",
+                action_type="user",
+                target_type="user",
+                target_id=",".join(map(str, updated_ids)),
+                target_identifier=f"{len(updated_ids)} users"
+            )
+        except Exception as e:
+            logging.error(f"Failed to log bulk suspend action: {e}")
+        
+
+    
+
+        return BulkSuspendUsersResponse(
+             message="Users suspended successfully" if is_suspended else "Users reinstated successfully",
+            updated_count=len(updated_ids),
+            updated_ids=updated_ids,
+            is_suspended=is_suspended
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Bulk suspend operation failed: {str(e)}"
+        )
+
 
 
 
@@ -3993,7 +4153,11 @@ async def update_admin_product(
     
     if "is_flagged" in update_dict:
         product.is_flagged = update_dict["is_flagged"]
-    
+        
+    if update_dict["is_verified"] is False:
+        product.is_spotlighted = False
+    print(update_dict["is_verified"])
+
     if "stock_status" in update_dict:
         # Validate stock_status
         valid_statuses = ["In Stock", "Out of Stock", "Limited"]
@@ -4245,6 +4409,8 @@ async def list_admin_users(
             query = query.filter(User.is_active == True)
         elif status.lower() == "inactive":
             query = query.filter(User.is_active == False)
+        elif status.lower() == "isSuspend":
+            query = query.filter(User.is_suspended == True)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -376,6 +376,33 @@ class BulkUpdateUserStatusResponse(BaseModel):
     updated_ids: List[int] = Field(..., description="List of updated user IDs")
     is_active: bool = Field(..., description="New active status")
 
+class BulkSuspendUsersRequest(BaseModel):
+    """Schema for bulk update user status request."""
+    
+    user_ids: List[int] = Field(..., min_length=1, max_length=100, description="List of user IDs to update")
+    is_suspended: bool = Field(..., description="Active status to set")
+    
+    @field_validator('user_ids')
+    @classmethod
+    def validate_user_ids(cls, v):
+        """Validate that all IDs are positive integers."""
+        if not v:
+            raise ValueError('user_ids cannot be empty')
+        if len(v) > 100:
+            raise ValueError('Cannot update more than 100 users at once')
+        for user_id in v:
+            if user_id <= 0:
+                raise ValueError('All user IDs must be positive integers')
+        return v
+
+
+class BulkSuspendUsersResponse(BaseModel):
+    """Schema for bulk update user status response."""
+    
+    message: str = Field(..., description="Success message")
+    updated_count: int = Field(..., description="Number of users updated")
+    updated_ids: List[int] = Field(..., description="List of updated user IDs")
+    is_suspended: bool = Field(..., description="New active status")
 
 class BulkDeleteProductsRequest(BaseModel):
     """Schema for bulk delete products request."""

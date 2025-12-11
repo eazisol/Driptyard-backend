@@ -78,6 +78,8 @@ class ModeratorResponse(BaseModel):
     is_active: bool = Field(..., description="Whether user is active")
     is_verified: bool = Field(..., description="Whether user is verified")
     is_moderator: bool = Field(..., description="Whether user is moderator")
+    is_banned:bool = Field(..., description="Whether user is moderator")
+    is_suspended:bool = Field(..., description="Whether user is moderator")
     avatar_url: Optional[str] = Field(None, description="Avatar URL")
     permissions: Optional[ModeratorPermissionResponse] = Field(None, description="Moderator permissions")
     created_at: datetime = Field(..., description="Creation timestamp")

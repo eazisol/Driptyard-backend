@@ -29,10 +29,10 @@ ALLOWED_HOSTS=["*"]
 SMTP_TLS=True
 SMTP_PORT=587
 SMTP_HOST=smtp.gmail.com
-SMTP_USER=bilalsajidali@gmail.com
-SMTP_PASSWORD=exnh nfie iytn jesd
+SMTP_USER=rehankhanabdali1@gmail.com
+SMTP_PASSWORD=crfk kygg zolm ukya
 EMAIL_FROM_NAME=Driptyard
-EMAIL_FROM_ADDRESS=bilalsajidali@gmail.com
+EMAIL_FROM_ADDRESS=rehankhanabdali1@gmail.com
 VERIFICATION_CODE_EXPIRY_MINUTES=15
 
 # File Upload Configuration
