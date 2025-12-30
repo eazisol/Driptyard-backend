@@ -104,10 +104,11 @@ class SearchService:
     def _search_products(self, query: str, limit: int) -> List[ProductSearchResult]:
         """Search products by title, description, or category."""
         # Build search filter
-        search_filter = or_(
-            Product.title.ilike(f"%{query}%"),
-            Product.description.ilike(f"%{query}%"),
-        )
+        # search_filter = or_(
+        #     Product.title.ilike(f"%{query}%"),
+        #     Product.description.ilike(f"%{query}%"),
+        # )
+        search_filter = Product.title.ilike(f"{query}%")
         
         # Query products (only active, not sold)
         products = self.db.query(Product).filter(
@@ -152,7 +153,7 @@ class SearchService:
     def _search_categories(self, query: str, limit: int) -> List[CategorySearchResult]:
         """Search categories by name."""
         categories = self.db.query(MainCategory).filter(
-            MainCategory.name.ilike(f"%{query}%")
+            MainCategory.name.ilike(f"{query}%")
         ).limit(limit).all()
         
         results = []
@@ -176,7 +177,7 @@ class SearchService:
     def _search_brands(self, query: str, limit: int) -> List[BrandSearchResult]:
         """Search brands by name."""
         brands = self.db.query(Brand).filter(
-            Brand.name.ilike(f"%{query}%"),
+            Brand.name.ilike(f"{query}%"),
             Brand.active == True
         ).limit(limit).all()
         
@@ -203,10 +204,9 @@ class SearchService:
         # Build user display name from first_name and last_name
         users = self.db.query(User).filter(
             or_(
-                User.username.ilike(f"%{query}%"),
-                User.first_name.ilike(f"%{query}%"),
-                User.last_name.ilike(f"%{query}%"),
-                func.concat(User.first_name, ' ', User.last_name).ilike(f"%{query}%")
+                User.first_name.ilike(f"{query}%"),
+                User.last_name.ilike(f"{query}%"),
+                func.concat(User.first_name, ' ', User.last_name).ilike(f"{query}%")
             ),
             User.is_active == True,
             User.is_suspended == False

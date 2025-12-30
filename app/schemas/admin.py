@@ -39,7 +39,6 @@ class ChartDataPoint(BaseModel):
     count: int = Field(..., description="Count for this date")
     cumulative: int = Field(..., description="Cumulative count up to this date")
 
-
 class StatsOverviewResponse(BaseModel):
     """Schema for admin stats overview response."""
     
@@ -72,7 +71,8 @@ class AdminProductResponse(BaseModel):
     is_active: bool = Field(..., description="Whether product is active")
     is_sold: bool = Field(..., description="Whether product is sold")
     is_verified: bool = Field(..., description="Whether product is verified")
-    is_flagged: bool = Field(..., description="Whether product is flagged")
+    is_flagged: int = Field(..., description="Whether product is flagged")
+    is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
     images: List[str] = Field(default_factory=list, description="Product images")
     owner_id: str = Field(..., description="Owner/seller ID")
     owner_name: Optional[str] = Field(None, description="Owner/seller username")
@@ -100,7 +100,7 @@ class AdminProductUpdateRequest(BaseModel):
     condition: Optional[str] = Field(None, max_length=50, description="Product condition")
     is_active: Optional[bool] = Field(None, description="Whether product is active")
     is_verified: Optional[bool] = Field(None, description="Whether product is verified")
-    is_flagged: Optional[bool] = Field(None, description="Whether product is flagged")
+    is_flagged: Optional[int] = Field(None, description="Whether product is flagged")
     stock_status: Optional[str] = Field(None, description="Stock status: In Stock, Out of Stock, Limited")
 
 

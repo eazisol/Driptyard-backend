@@ -7,6 +7,8 @@ This module contains admin-only endpoints for managing the platform.
 from datetime import datetime, timedelta, date
 from typing import Optional, List, Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, cast, Date
 from sqlalchemy.exc import IntegrityError
@@ -66,13 +68,18 @@ from app.schemas.spotlight import (
     SpotlightApplyRequest,
     SpotlightResponse,
     ActiveSpotlightListResponse,
-    SpotlightHistoryListResponse
+    SpotlightHistoryListResponse,
+    BulkSpotlightRequest,
+    BulkSpotlightResponse,
+    SpotlightedProductResponse,
+    FailedProductResponse
 )
 from app.schemas.audit_log import (
     AuditLogResponse,
     AuditLogListResponse
 )
 from app.services.report import ProductReportService
+from app.services.product import ProductService
 from app.services.spotlight import SpotlightService
 from app.services.audit_log import AuditLogService
 
@@ -744,7 +751,7 @@ async def list_admin_products(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_sold: Optional[bool] = Query(None, description="Filter by sold status"),
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
-    is_flagged: Optional[bool] = Query(None, description="Filter by flagged status"),
+    is_flagged: Optional[int] = Query(None, description="Filter by flagged status"),
     stock_status: Optional[str] = Query(None, description="Filter by stock status")
 ):
     """
@@ -831,6 +838,7 @@ async def list_admin_products(
             is_sold=product.is_sold,
             is_verified=product.is_verified,
             is_flagged=product.is_flagged,
+            is_spotlighted=product.is_spotlighted,
             images=product.images or [],
             owner_id=str(product.owner_id),
             owner_name=product.owner.username if product.owner else None,
@@ -876,6 +884,7 @@ async def bulk_delete_products(
     
     product_ids = request_data.product_ids
     deleted_ids = []
+    deleted_titles = []
     not_found_ids = []
     
     logger = logging.getLogger(__name__)
@@ -920,6 +929,8 @@ async def bulk_delete_products(
             if not product:
                 continue
             
+            deleted_titles.append(product.title) # Capture title before deletion
+            
             # Delete product-related data
             safe_delete(
                 lambda: db.query(ProductFollow).filter(ProductFollow.product_id == product_id).delete(synchronize_session=False),
@@ -958,11 +969,11 @@ async def bulk_delete_products(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Deleted Products",
-                action_type="product",
+                action="Deleted Listing",
+                action_type="listing",
                 target_type="product",
                 target_id=",".join(map(str, deleted_ids)),
-                target_identifier=f"{len(deleted_ids)} products"
+                target_identifier=", ".join(deleted_titles) if deleted_titles else f"{len(deleted_ids)} Listing"
             )
         except Exception as e:
             logging.error(f"Failed to log bulk delete products action: {e}")
@@ -977,10 +988,10 @@ async def bulk_delete_products(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Bulk delete products failed: {e}")
+        logger.error(f"Delete products failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk delete operation failed: {str(e)}"
+            detail=f"Delete operation failed: {str(e)}"
         )
 
 
@@ -1012,6 +1023,7 @@ async def bulk_update_product_status(
     product_ids = request_data.product_ids
     is_active = request_data.is_active
     updated_ids = []
+    updated_titles = []
     not_found_ids = []
     
     # Validate all products exist first
@@ -1026,13 +1038,17 @@ async def bulk_update_product_status(
             detail=f"One or more products not found: {not_found_ids}"
         )
     
+    count=0
     # Update each product
     try:
         for product_id in product_ids:
             product = db.query(Product).filter(Product.id == product_id).first()
             if product:
-                product.is_active = is_active
-                updated_ids.append(product_id)
+                if product.is_active != is_active:
+                    count += 1
+                    product.is_active = is_active
+                    updated_ids.append(product_id)
+                    updated_titles.append(product.title) # Capture title
         
         db.commit()
         
@@ -1040,21 +1056,23 @@ async def bulk_update_product_status(
         try:
             performed_by_id_int = int(current_user_id)
             action_desc = "Activated" if is_active else "Deactivated"
+            product_message  = "listings" if count > 1 else "listing"
+        
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action=f"Bulk {action_desc} Products",
-                action_type="product",
+                action=f"{action_desc} {product_message}",
+                action_type="listing",
                 target_type="product",
                 target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} products"
+                target_identifier=", ".join(updated_titles) if updated_titles else f"{count} {product_message}"
             )
         except Exception as e:
             logging.error(f"Failed to log bulk update product status action: {e}")
         
         return BulkUpdateProductStatusResponse(
             message="Product status updated successfully",
-            updated_count=len(updated_ids),
+            updated_count=count,
             updated_ids=updated_ids,
             is_active=is_active
         )
@@ -1063,7 +1081,7 @@ async def bulk_update_product_status(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk update operation failed: {str(e)}"
+            detail=f"Update operation failed: {str(e)}"
         )
 
 
@@ -1095,6 +1113,7 @@ async def bulk_update_product_verification(
     product_ids = request_data.product_ids
     is_verified = request_data.is_verified
     updated_ids = []
+    updated_titles = []
     not_found_ids = []
     
     # Validate all products exist first
@@ -1108,14 +1127,17 @@ async def bulk_update_product_verification(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"One or more products not found: {not_found_ids}"
         )
-    
+    count=0
     # Update each product
     try:
         for product_id in product_ids:
             product = db.query(Product).filter(Product.id == product_id).first()
             if product:
-                product.is_verified = is_verified
-                updated_ids.append(product_id)
+                if product.is_verified != is_verified:
+                    count += 1
+                    product.is_verified = is_verified
+                    updated_ids.append(product_id)
+                    updated_titles.append(product.title) # Capture title
         
         db.commit()
         
@@ -1123,21 +1145,22 @@ async def bulk_update_product_verification(
         try:
             performed_by_id_int = int(current_user_id)
             action_desc = "Verified" if is_verified else "Unverified"
+            product_message  = "listings" if count > 1 else "listing"
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action=f"Bulk {action_desc} Products",
-                action_type="product",
+                action=f" {action_desc} {product_message}",
+                action_type="listing",
                 target_type="product",
                 target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} products"
+                target_identifier=", ".join(updated_titles) if updated_titles else f"{count} {product_message}"
             )
         except Exception as e:
             logging.error(f"Failed to log bulk update product verification action: {e}")
         
         return BulkUpdateProductVerificationResponse(
             message="Product verification updated successfully",
-            updated_count=len(updated_ids),
+            updated_count=count,
             updated_ids=updated_ids,
             is_verified=is_verified
         )
@@ -1146,7 +1169,7 @@ async def bulk_update_product_verification(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk update operation failed: {str(e)}"
+            detail=f"Update operation failed: {str(e)}"
         )
 
 
@@ -1233,16 +1256,13 @@ async def update_admin_product(
     # Update status fields
     if "is_active" in update_dict:
         product.is_active = update_dict["is_active"]
-    
+        if product.is_active is False:
+            product.is_spotlighted = False
+        
     if "is_verified" in update_dict:
         product.is_verified = update_dict["is_verified"]
-    
-    if "is_flagged" in update_dict:
-        product.is_flagged = update_dict["is_flagged"]
-
-    if update_dict["is_verified"] is False:
-        product.is_spotlighted = False
-    print(update_dict["is_verified"])
+        if update_dict["is_verified"] is False:
+            product.is_spotlighted = False
 
     if "stock_status" in update_dict:
         # Validate stock_status
@@ -1254,6 +1274,17 @@ async def update_admin_product(
             )
         product.stock_status = update_dict["stock_status"]
     
+    # Check and update spotlight status if product exists in spotlight table
+    from app.models.spotlight import Spotlight
+    spotlight = db.query(Spotlight).filter(Spotlight.product_id == product_id_int).first()
+    if spotlight:
+        # Check if product is not verified or not active (using updated values)
+        if not product.is_verified or not product.is_active:
+            spotlight.status = "paused"
+        if  product.is_verified or  product.is_active:
+            spotlight.status = "active"
+            product.is_spotlighted = True
+    
     db.commit()
     db.refresh(product)
     
@@ -1263,9 +1294,9 @@ async def update_admin_product(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Updated Listing",
-            action_type="product",
-            target_type="product",
+            action="Updated listing",
+            action_type="listing",
+            target_type="listing",
             target_id=str(product.id),
             target_identifier=product.title
         )
@@ -1287,8 +1318,10 @@ async def update_admin_product(
         is_sold=product.is_sold,
         is_verified=product.is_verified,
         is_flagged=product.is_flagged,
+        is_spotlighted=product.is_spotlighted,
         images=product.images or [],
         owner_id=str(product.owner_id),
+        owner_name=product.owner.username if product.owner else None,
         created_at=product.created_at
     )
 
@@ -1426,9 +1459,9 @@ async def delete_admin_product(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Removed Listing",
-            action_type="product",
-            target_type="product",
+            action="Removed listing",
+            action_type="listing",
+            target_type="listing",
             target_id=product_id_str,
             target_identifier=product_title
         )
@@ -1483,12 +1516,13 @@ async def list_admin_users(
     # Apply filters
     if search:
         search_term = f"%{search}%"
-        query = query.filter(
-            or_(
-                User.email.ilike(search_term),
-                User.username.ilike(search_term)
-            )
-        )
+        query = query.filter(User.username.ilike(search_term))
+        # query = query.filter(
+        #     or_(
+        #         User.email.ilike(search_term),
+        #         User.username.ilike(search_term)
+        #     )
+        # )
     
     if status:
         if status.lower() == "active":
@@ -1521,8 +1555,8 @@ async def list_admin_users(
     for user in users:
         # Count user's active listings
         listings_count = db.query(func.count(Product.id)).filter(
-            Product.owner_id == user.id,
-            Product.is_active == True
+            Product.owner_id == user.id
+            #Product.is_active == True
         ).scalar() or 0
         
         user_list.append(AdminUserResponse(
@@ -1590,10 +1624,13 @@ async def bulk_delete_users(
     
     user_ids = request_data.user_ids
     deleted_ids = []
+    deleted_usernames = []
     not_found_ids = []
     
     logger = logging.getLogger(__name__)
-    
+    message = "User deleted"
+    if len(deleted_ids) > 1:
+        message = f"Users deleted"
     # Validate all users exist first
     for user_id in user_ids:
         user = db.query(User).filter(User.id == user_id).first()
@@ -1639,6 +1676,8 @@ async def bulk_delete_users(
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 continue
+            
+            username_to_delete = user.username
             
             # Delete user's products first
             user_products = db.query(Product).filter(Product.owner_id == user_id).all()
@@ -1691,15 +1730,20 @@ async def bulk_delete_users(
             
             # Delete product reports by this user
             safe_delete(
-                lambda: db.query(ProductReport).filter(ProductReport.reported_by_id == user_id).delete(synchronize_session=False),
+                lambda: db.query(ProductReport).filter(ProductReport.user_id == user_id).delete(synchronize_session=False),
                 f"product reports by user {user_id}"
             )
             
+            safe_delete(
+                lambda: db.query(ModeratorPermission).filter(ModeratorPermission.user_id == user_id).delete(synchronize_session=False),
+                f"product reports by user {user_id}"
+            )
             # Finally, delete the user
             try:
                 db.delete(user)
                 db.commit()
                 deleted_ids.append(user_id)
+                deleted_usernames.append(username_to_delete)
                 logger.info(f"Successfully deleted user {user_id}")
             except Exception as e:
                 db.rollback()
@@ -1708,24 +1752,24 @@ async def bulk_delete_users(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to delete user {user_id}: {str(e)}"
                 )
-        
+        user = "users" if len(deleted_ids) > 1 else "user"
         # Log audit action for bulk delete
         try:
             performed_by_id_int = int(current_user_id)
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Deleted Users",
+                action="Deleted user",
                 action_type="user",
                 target_type="user",
                 target_id=",".join(map(str, deleted_ids)),
-                target_identifier=f"{len(deleted_ids)} users"
+                target_identifier=", ".join(deleted_usernames)
             )
         except Exception as e:
             logging.error(f"Failed to log bulk delete users action: {e}")
         
         return BulkDeleteUsersResponse(
-            message="Users deleted successfully",
+            message=message,
             deleted_count=len(deleted_ids),
             deleted_ids=deleted_ids
         )
@@ -1734,10 +1778,10 @@ async def bulk_delete_users(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Bulk delete users failed: {e}")
+        logger.error(f"Delete users failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk delete operation failed: {str(e)}"
+            detail=f"Delete operation failed: {str(e)}"
         )
 
 
@@ -1769,6 +1813,7 @@ async def bulk_update_user_status(
     user_ids = request_data.user_ids
     is_active = request_data.is_active
     updated_ids = []
+    updated_usernames = []
     not_found_ids = []
     
     # Validate all users exist first
@@ -1790,9 +1835,10 @@ async def bulk_update_user_status(
             if user:
                 user.is_active = is_active
                 updated_ids.append(user_id)
+                updated_usernames.append(user.username)
         
         db.commit()
-        
+        user = "users" if len(updated_ids) > 1 else "user"
         # Log audit action
         try:
             performed_by_id_int = int(current_user_id)
@@ -1800,11 +1846,11 @@ async def bulk_update_user_status(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action=f"Bulk {action_desc} Users",
+                action=f"{action_desc} {user}",
                 action_type="user",
                 target_type="user",
                 target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} users"
+                target_identifier=", ".join(updated_usernames)
             )
         except Exception as e:
             logging.error(f"Failed to log bulk update user status action: {e}")
@@ -1820,7 +1866,7 @@ async def bulk_update_user_status(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk update operation failed: {str(e)}"
+            detail=f"Update operation failed: {str(e)}"
         )
 
 @router.put("/users/bulk/suspend", response_model=BulkSuspendUsersResponse)
@@ -1841,8 +1887,16 @@ async def bulk_suspend_users(
     user_ids = request_data.user_ids
     is_suspended = request_data.is_suspended
     updated_ids = []
+    updated_usernames = []
     not_found_ids = []
+    message = "Suspend User"
+    if is_suspended:
+        message = f"Suspend User"
+    else:
+        message = f"Reinstate User"
 
+
+    
     # Validate all users exist
     for user_id in user_ids:
         user = db.query(User).filter(User.id == user_id).first()
@@ -1854,27 +1908,65 @@ async def bulk_suspend_users(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"One or more users not found: {not_found_ids}"
         )
-
+    count=0
     try:
         # Suspend users
+        product_service = ProductService(db)
+        
         for user_id in user_ids:
             user = db.query(User).filter(User.id == user_id).first()
-            # user.is_active = is_suspended
-            user.is_suspended = is_suspended
-            updated_ids.append(user_id)
+            if user.is_suspended != is_suspended:
+                count += 1
+                user.is_suspended = is_suspended
+                
+                if is_suspended:
+                    user.is_suspended = True
+                    user.suspended_at = datetime.now()
+                    
+                    # Deactivate user products
+                    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id)
+                    
+                    # Log product deactivation if any
+                    if deactivated_count > 0:
+                        try:
+                            # Log detailed product deactivation
+                            log_audit_action(
+                                db=db,
+                                performed_by_id=int(current_user_id),
+                                action=f"Deactivated {deactivated_count} listings for user {user.username}",
+                                action_type="listing",
+                                target_type="product",
+                                target_id=",".join(deactivated_ids),
+                                target_identifier=",".join(deactivated_titles[:5]) + ("..." if len(deactivated_titles) > 5 else "")
+                            )
+                        except Exception as e:
+                            logging.error(f"Failed to log product deactivation: {e}")
+                else:
+                    # Reinstate user - set active to True
+                    user.is_suspended = False
+                
+                updated_ids.append(user_id)
+                updated_usernames.append(user.username)
 
         db.commit()
-
+        if count > 1:
+            
+            message = f"Suspend users"
+            if is_suspended:
+                message = f"Suspend users"
+            else:
+                message = f"Reinstate users"
+        user = "users" if count > 1 else "user"
         # Log audit action
         try:
             log_audit_action(
                 db=db,
                 performed_by_id=int(current_user_id),
-                action="Bulk Suspend Users",
+                action=message,
                 action_type="user",
                 target_type="user",
                 target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} users"
+                target_identifier=", ".join(updated_usernames)
             )
         except Exception as e:
             logging.error(f"Failed to log bulk suspend action: {e}")
@@ -1882,18 +1974,24 @@ async def bulk_suspend_users(
 
     
 
+        if count > 1:
+            message = "Users suspended successfully" if is_suspended else "Users reinstated successfully"
+        else:
+            message = "User suspended successfully" if is_suspended else "User reinstated successfully"
+
         return BulkSuspendUsersResponse(
-             message="Users suspended successfully" if is_suspended else "Users reinstated successfully",
-            updated_count=len(updated_ids),
+            message=message,
+            updated_count=count,
             updated_ids=updated_ids,
             is_suspended=is_suspended
         )
+
 
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk suspend operation failed: {str(e)}"
+            detail=f"Suspend operation failed: {str(e)}"
         )
 
 
@@ -2103,7 +2201,7 @@ async def update_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Updated User",
+            action="Updated user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -2196,7 +2294,7 @@ async def ban_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Banned User",
+            action="Banned user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -2274,7 +2372,7 @@ async def unban_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Unbanned User",
+            action="Unbanned user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -2354,10 +2452,29 @@ async def suspend_user(
     
     # Suspend user
     user.is_suspended = True
-    user.is_active = False
     user.suspended_at = datetime.utcnow()
+    
+    # Deactivate user products
+    product_service = ProductService(db)
+    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id)
+    
     db.commit()
     db.refresh(user)
+    
+    # Log product deactivation if any
+    if deactivated_count > 0:
+        try:
+            log_audit_action(
+                db=db,
+                performed_by_id=int(current_user_id),
+                action=f"Deactivated {deactivated_count} listings for user {user.username}",
+                action_type="listing",
+                target_type="product",
+                target_id=",".join(deactivated_ids),
+                target_identifier=",".join(deactivated_titles[:5]) + ("..." if len(deactivated_titles) > 5 else "")
+            )
+        except Exception as e:
+            logging.error(f"Failed to log product deactivation: {e}")
     
     # Send notification email (asynchronously - don't wait for it)
     try:
@@ -2372,11 +2489,11 @@ async def suspend_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Suspended User",
+            action="Suspend user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
-            target_identifier=user.username
+            target_identifier=str(user.username)
         )
     except Exception as e:
         logging.error(f"Failed to log suspend action: {e}")
@@ -2457,7 +2574,7 @@ async def unsuspend_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Unsuspended User",
+            action="Reinstate user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -2556,7 +2673,7 @@ async def reset_user_password(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Reset Password",
+            action="Reset password",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -2852,7 +2969,7 @@ async def delete_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Deleted User",
+            action="User deleted",
             action_type="user",
             target_type="user",
             target_id=str(user_id_int),
@@ -3008,6 +3125,7 @@ async def bulk_approve_reports(
     
     report_ids = request_data.report_ids
     approved_ids = []
+    approved_details = []
     not_found_ids = []
     
     # Get approved status
@@ -3040,10 +3158,13 @@ async def bulk_approve_reports(
                 
                 # Deactivate the product
                 product = db.query(Product).filter(Product.id == report.product_id).first()
+                product_title = "Unknown Product"
                 if product:
                     product.is_active = False
+                    product_title = product.title
                 
                 approved_ids.append(report_id)
+                approved_details.append(f"Report #{report_id} for {product_title}")
         
         db.commit()
         
@@ -3053,11 +3174,11 @@ async def bulk_approve_reports(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Approved Reports",
+                action="Approved reports",
                 action_type="report",
                 target_type="report",
                 target_id=",".join(map(str, approved_ids)),
-                target_identifier=f"{len(approved_ids)} reports"
+                target_identifier=", ".join(approved_details)
             )
         except Exception as e:
             logging.error(f"Failed to log bulk approve reports action: {e}")
@@ -3073,7 +3194,7 @@ async def bulk_approve_reports(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk approve operation failed: {str(e)}"
+            detail=f"Approve operation failed: {str(e)}"
         )
 
 
@@ -3104,6 +3225,7 @@ async def bulk_reject_reports(
     
     report_ids = request_data.report_ids
     rejected_ids = []
+    rejected_details = []
     not_found_ids = []
     
     # Validate all reports exist first
@@ -3123,8 +3245,10 @@ async def bulk_reject_reports(
         for report_id in report_ids:
             report = db.query(ProductReport).filter(ProductReport.id == report_id).first()
             if report:
+                product_title = report.product.title if report.product else f"Product #{report.product_id}"
                 db.delete(report)
                 rejected_ids.append(report_id)
+                rejected_details.append(f"Report #{report_id} for {product_title}")
         
         db.commit()
         
@@ -3134,11 +3258,11 @@ async def bulk_reject_reports(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Rejected Reports",
+                action="Rejected reports",
                 action_type="report",
                 target_type="report",
                 target_id=",".join(map(str, rejected_ids)),
-                target_identifier=f"{len(rejected_ids)} reports"
+                target_identifier=", ".join(rejected_details)
             )
         except Exception as e:
             logging.error(f"Failed to log bulk reject reports action: {e}")
@@ -3154,7 +3278,7 @@ async def bulk_reject_reports(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk reject operation failed: {str(e)}"
+            detail=f"Reject operation failed: {str(e)}"
         )
 
 
@@ -3213,7 +3337,7 @@ async def approve_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Approved Report",
+            action="Approved report",
             action_type="report",
             target_type="product",
             target_id=str(report.product_id),
@@ -3281,7 +3405,7 @@ async def reject_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Rejected Report",
+            action="Rejected report",
             action_type="report",
             target_type="product",
             target_id=str(report.product_id),
@@ -3347,7 +3471,7 @@ async def review_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Reviewed Report",
+            action="Reviewed report",
             action_type="report",
             target_type="product",
             target_id=str(report.product_id),
@@ -3358,6 +3482,117 @@ async def review_report(
         logging.error(f"Failed to log review report action: {e}")
     
     return result
+
+
+@router.post("/products/bulk/spotlight", response_model=BulkSpotlightResponse)
+async def bulk_apply_spotlight(
+    request: BulkSpotlightRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Perform bulk spotlight actions: add, edit, or remove spotlights (Admin or Moderator with permission).
+    
+    Supports three actions:
+    - 'add': Create new spotlight entries for products
+    - 'edit': Update existing spotlight entries (preserves start_time)
+    - 'remove': Remove spotlight entries (soft delete)
+    
+    For 'add' and 'edit' actions, supports both predefined duration (24, 72, or 168 hours) and custom end time.
+    
+    Args:
+        request: Bulk spotlight request with action, product IDs, and duration/end time (for add/edit)
+        current_user_id: Current authenticated user ID
+        db: Database session
+        
+    Returns:
+        BulkSpotlightResponse: Response containing updated count, failed count, and details
+        
+    Raises:
+        HTTPException: If user doesn't have permission, validation fails, or all products fail
+    """
+    # Get user to verify they exist (permission check happens in service)
+    try:
+        user_id_int = int(current_user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user identifier. Expected integer ID."
+        )
+    
+    user = db.query(User).filter(User.id == user_id_int).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if user is admin or moderator
+    if not user.is_admin and not user.is_moderator:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or moderator access required"
+        )
+    
+    # Apply bulk spotlight action (service will check specific permissions)
+    service = SpotlightService(db)
+    
+    try:
+        result = service.bulk_spotlight_action(
+            action=request.action,
+            product_ids=request.product_ids,
+            admin_user_id=user_id_int,
+            duration_hours=request.duration_hours,
+            custom_end_time=request.custom_end_time
+        )
+        
+        # Log audit action for successful bulk operation
+        try:
+            updated_count = result.get("updated_count", 0)
+            action_messages = {
+                "add": "Applied spotlight",
+                "edit": "Edited spotlight",
+                "remove": "Removed spotlight"
+            }
+            action_message = action_messages.get(request.action, "Spotlight action")
+            
+            # Get product titles for audit log
+            products = db.query(Product).filter(Product.id.in_(request.product_ids)).all()
+            target_identifier_str = ", ".join([p.title for p in products]) if products else f"{updated_count} listing(s)"
+            
+            log_audit_action(
+                db=db,
+                performed_by_id=user_id_int,
+                action=f"{action_message} to {updated_count} Listing(s)",
+                action_type="spotlight",
+                target_type="product",
+                target_id=",".join(str(pid) for pid in request.product_ids),
+                target_identifier=target_identifier_str
+            )
+        except Exception as e:
+            logging.error(f"Failed to log bulk spotlight action: {e}")
+        
+        # Determine status code based on whether there are failed products
+        failed_count = result.get("failed_count", 0)
+        status_code = status.HTTP_207_MULTI_STATUS if failed_count > 0 else status.HTTP_200_OK
+        
+        # Serialize the result to ensure datetime objects are properly encoded
+        # Return response with appropriate status code
+        return JSONResponse(
+            status_code=status_code,
+            content=jsonable_encoder(result)
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (validation errors, permission errors, etc.)
+        raise
+    except Exception as e:
+        # Handle unexpected errors
+        logging.error(f"Unexpected error in bulk spotlight: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while processing bulk spotlight request"
+        )
 
 
 @router.post("/products/{product_id}/spotlight", response_model=SpotlightResponse, status_code=status.HTTP_201_CREATED)
@@ -3435,7 +3670,7 @@ async def apply_spotlight(
         log_audit_action(
             db=db,
             performed_by_id=user_id_int,
-            action="Applied Spotlight",
+            action="Applied spotlight to listing",
             action_type="spotlight",
             target_type="product",
             target_id=str(product_id_int),
@@ -3518,9 +3753,9 @@ async def remove_spotlight(
         log_audit_action(
             db=db,
             performed_by_id=user_id_int,
-            action="Removed Spotlight",
+            action="Removed spotlight from listing",
             action_type="spotlight",
-            target_type="product",
+            target_type="listing",
             target_id=str(product_id_int),
             target_identifier=product_title
         )
@@ -3577,22 +3812,22 @@ async def get_spotlight_history(
     """
     Get spotlight history (Admin or Moderator with can_see_spotlight_history permission).
     
-    Returns a paginated list of spotlight history entries, including
-    applied, expired, and removed spotlights. Supports filtering by
-    product, action type, and date range.
+    Returns a paginated list of spotlights (parent) with nested arrays of related
+    products from spotlight_history (child). Each spotlight includes all its related
+    history entries. Supports filtering by product, status, and date range.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         page: Page number
         page_size: Items per page
-        product_id: Filter by product ID
-        status: Filter by action type
-        date_from: Filter from date
-        date_to: Filter to date
+        product_id: Filter by product ID (filters spotlights by product_id)
+        status: Filter by spotlight status (active, expired, removed)
+        date_from: Filter from date (filters by spotlight start_time)
+        date_to: Filter to date (filters by spotlight end_time)
         
     Returns:
-        SpotlightHistoryListResponse: Paginated list of history entries
+        SpotlightHistoryListResponse: Paginated list of spotlights with nested history entries
         
     Raises:
         HTTPException: If user doesn't have permission
@@ -3732,7 +3967,7 @@ async def create_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action=f"Created {user_type_name.capitalize()}",
+            action=f"Created {user_type_name.capitalize()} user",
             action_type="user",
             target_type="user",
             target_id=str(new_user.id),
@@ -3760,451 +3995,8 @@ async def create_user(
 # BULK ACTION ENDPOINTS
 # ============================================================================
 
-@router.delete("/products/bulk", response_model=BulkDeleteProductsResponse)
-async def bulk_delete_products(
-    request_data: BulkDeleteProductsRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Bulk delete multiple products (Admin or Moderator with can_manage_listings permission).
-    
-    Permanently deletes multiple products and all associated data.
-    All operations are performed in a transaction.
-    
-    Args:
-        request_data: Request containing list of product IDs to delete
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        BulkDeleteProductsResponse: Response with deleted count and IDs
-        
-    Raises:
-        HTTPException: If user doesn't have permission or validation fails
-    """
-    import logging
-    
-    # Verify admin or moderator with manage listings permission
-    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
-    
-    product_ids = request_data.product_ids
-    deleted_ids = []
-    not_found_ids = []
-    
-    logger = logging.getLogger(__name__)
-    
-    # Validate all products exist first
-    for product_id in product_ids:
-        product = db.query(Product).filter(Product.id == product_id).first()
-        if not product:
-            not_found_ids.append(product_id)
-    
-    if not_found_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"One or more products not found: {not_found_ids}"
-        )
-    
-    # Import related models
-    from app.models.follow import ProductFollow
-    from app.models.spotlight import Spotlight, SpotlightHistory
-    from app.models.report import ProductReport
-    
-    # Helper function to safely delete records
-    def safe_delete(query_func, error_message):
-        """Safely execute a delete query, catching and logging any errors."""
-        try:
-            result = query_func()
-            db.commit()
-            if result > 0:
-                logger.info(f"Deleted {result} record(s) from {error_message}")
-        except Exception as e:
-            db.rollback()
-            error_str = str(e)
-            if "does not exist" in error_str.lower() or "undefinedtable" in error_str.lower():
-                logger.warning(f"Skipping deletion - table may not exist: {error_message}")
-            else:
-                logger.warning(f"Could not delete {error_message}: {error_str}")
-    
-    # Delete each product
-    try:
-        for product_id in product_ids:
-            product = db.query(Product).filter(Product.id == product_id).first()
-            if not product:
-                continue
-            
-            # Delete product-related data
-            safe_delete(
-                lambda: db.query(ProductFollow).filter(ProductFollow.product_id == product_id).delete(synchronize_session=False),
-                f"product follows for product {product_id}"
-            )
-            safe_delete(
-                lambda: db.query(ProductReport).filter(ProductReport.product_id == product_id).delete(synchronize_session=False),
-                f"product reports for product {product_id}"
-            )
-            safe_delete(
-                lambda: db.query(SpotlightHistory).filter(SpotlightHistory.product_id == product_id).delete(synchronize_session=False),
-                f"spotlight history for product {product_id}"
-            )
-            safe_delete(
-                lambda: db.query(Spotlight).filter(Spotlight.product_id == product_id).delete(synchronize_session=False),
-                f"spotlights for product {product_id}"
-            )
-            
-            # Delete the product
-            try:
-                db.delete(product)
-                db.commit()
-                deleted_ids.append(product_id)
-                logger.info(f"Successfully deleted product {product_id}")
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Failed to delete product {product_id}: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to delete product {product_id}: {str(e)}"
-                )
-        
-        # Log audit action
-        try:
-            performed_by_id_int = int(current_user_id)
-            log_audit_action(
-                db=db,
-                performed_by_id=performed_by_id_int,
-                action="Bulk Deleted Products",
-                action_type="product",
-                target_type="product",
-                target_id=",".join(map(str, deleted_ids)),
-                target_identifier=f"{len(deleted_ids)} products"
-            )
-        except Exception as e:
-            logging.error(f"Failed to log bulk delete products action: {e}")
-        
-        return BulkDeleteProductsResponse(
-            message="Products deleted successfully",
-            deleted_count=len(deleted_ids),
-            deleted_ids=deleted_ids
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Bulk delete products failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk delete operation failed: {str(e)}"
-        )
 
 
-@router.put("/products/bulk/status", response_model=BulkUpdateProductStatusResponse)
-async def bulk_update_product_status(
-    request_data: BulkUpdateProductStatusRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Bulk update product active status (Admin or Moderator with can_manage_listings permission).
-    
-    Updates the is_active status for multiple products at once.
-    
-    Args:
-        request_data: Request containing list of product IDs and new status
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        BulkUpdateProductStatusResponse: Response with updated count and IDs
-        
-    Raises:
-        HTTPException: If user doesn't have permission or validation fails
-    """
-    # Verify admin or moderator with manage listings permission
-    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
-    
-    product_ids = request_data.product_ids
-    is_active = request_data.is_active
-    updated_ids = []
-    not_found_ids = []
-    
-    # Validate all products exist first
-    for product_id in product_ids:
-        product = db.query(Product).filter(Product.id == product_id).first()
-        if not product:
-            not_found_ids.append(product_id)
-    
-    if not_found_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"One or more products not found: {not_found_ids}"
-        )
-    
-    # Update each product
-    try:
-        for product_id in product_ids:
-            product = db.query(Product).filter(Product.id == product_id).first()
-            if product:
-                product.is_active = is_active
-                updated_ids.append(product_id)
-        
-        db.commit()
-        
-        # Log audit action
-        try:
-            performed_by_id_int = int(current_user_id)
-            action_desc = "Activated" if is_active else "Deactivated"
-            log_audit_action(
-                db=db,
-                performed_by_id=performed_by_id_int,
-                action=f"Bulk {action_desc} Products",
-                action_type="product",
-                target_type="product",
-                target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} products"
-            )
-        except Exception as e:
-            logging.error(f"Failed to log bulk update product status action: {e}")
-        
-        return BulkUpdateProductStatusResponse(
-            message="Product status updated successfully",
-            updated_count=len(updated_ids),
-            updated_ids=updated_ids,
-            is_active=is_active
-        )
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk update operation failed: {str(e)}"
-        )
-
-
-@router.put("/products/bulk/verification", response_model=BulkUpdateProductVerificationResponse)
-async def bulk_update_product_verification(
-    request_data: BulkUpdateProductVerificationRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Bulk update product verification status (Admin or Moderator with can_manage_listings permission).
-    
-    Updates the is_verified status for multiple products at once.
-    
-    Args:
-        request_data: Request containing list of product IDs and new verification status
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        BulkUpdateProductVerificationResponse: Response with updated count and IDs
-        
-    Raises:
-        HTTPException: If user doesn't have permission or validation fails
-    """
-    # Verify admin or moderator with manage listings permission
-    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
-    
-    product_ids = request_data.product_ids
-    is_verified = request_data.is_verified
-    updated_ids = []
-    not_found_ids = []
-    
-    # Validate all products exist first
-    for product_id in product_ids:
-        product = db.query(Product).filter(Product.id == product_id).first()
-        if not product:
-            not_found_ids.append(product_id)
-    
-    if not_found_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"One or more products not found: {not_found_ids}"
-        )
-    
-    # Update each product
-    try:
-        for product_id in product_ids:
-            product = db.query(Product).filter(Product.id == product_id).first()
-            if product:
-                product.is_verified = is_verified
-                updated_ids.append(product_id)
-        
-        db.commit()
-        
-        # Log audit action
-        try:
-            performed_by_id_int = int(current_user_id)
-            action_desc = "Verified" if is_verified else "Unverified"
-            log_audit_action(
-                db=db,
-                performed_by_id=performed_by_id_int,
-                action=f"Bulk {action_desc} Products",
-                action_type="product",
-                target_type="product",
-                target_id=",".join(map(str, updated_ids)),
-                target_identifier=f"{len(updated_ids)} products"
-            )
-        except Exception as e:
-            logging.error(f"Failed to log bulk update product verification action: {e}")
-        
-        return BulkUpdateProductVerificationResponse(
-            message="Product verification updated successfully",
-            updated_count=len(updated_ids),
-            updated_ids=updated_ids,
-            is_verified=is_verified
-        )
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk update operation failed: {str(e)}"
-        )
-
-
-
-
-@router.put("/products/{product_id}", response_model=AdminProductResponse)
-async def update_admin_product(
-    product_id: str,
-    update_data: AdminProductUpdateRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Update product fields (Admin or Moderator with can_manage_listings permission).
-    
-    Allows admins/moderators to update product fields including title, price, condition,
-    is_active, is_verified, is_flagged, and stock_status.
-    
-    Args:
-        product_id: Product ID (integer)
-        update_data: Product update data
-        current_user_id: Current authenticated user ID
-        db: Database session
-        
-    Returns:
-        AdminProductResponse: Updated product
-        
-    Raises:
-        HTTPException: If user doesn't have permission or product not found
-    """
-    # Verify admin or moderator with manage listings permission
-    verify_admin_or_moderator_with_listings_permission(current_user_id, db, require_manage=True)
-    
-    # Get product
-    try:
-        product_id_int = int(product_id)
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid product ID format. Expected integer ID."
-        )
-    
-    product = db.query(Product).filter(Product.id == product_id_int).first()
-    
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-    
-    # Update fields
-    update_dict = update_data.model_dump(exclude_unset=True)
-    
-    # Update title if provided
-    if "title" in update_dict:
-        title = update_dict["title"]
-        if title and title.strip():
-            product.title = title.strip()
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Title cannot be empty"
-            )
-    
-    # Update price if provided
-    if "price" in update_dict:
-        price = update_dict["price"]
-        if price is not None:
-            if price < 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Price cannot be negative"
-                )
-            product.price = price
-    
-    # Update condition if provided
-    if "condition" in update_dict:
-        condition = update_dict["condition"]
-        if condition:
-            product.condition = condition.strip()
-        else:
-            product.condition = None
-    
-    # Update status fields
-    if "is_active" in update_dict:
-        product.is_active = update_dict["is_active"]
-    
-    if "is_verified" in update_dict:
-        product.is_verified = update_dict["is_verified"]
-    
-    if "is_flagged" in update_dict:
-        product.is_flagged = update_dict["is_flagged"]
-        
-    if update_dict["is_verified"] is False:
-        product.is_spotlighted = False
-    print(update_dict["is_verified"])
-
-    if "stock_status" in update_dict:
-        # Validate stock_status
-        valid_statuses = ["In Stock", "Out of Stock", "Limited"]
-        if update_dict["stock_status"] not in valid_statuses:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid stock_status. Must be one of: {', '.join(valid_statuses)}"
-            )
-        product.stock_status = update_dict["stock_status"]
-    
-    db.commit()
-    db.refresh(product)
-    
-    # Log audit action
-    try:
-        performed_by_id_int = int(current_user_id)
-        log_audit_action(
-            db=db,
-            performed_by_id=performed_by_id_int,
-            action="Updated Listing",
-            action_type="product",
-            target_type="product",
-            target_id=str(product.id),
-            target_identifier=product.title
-        )
-    except Exception as e:
-        logging.error(f"Failed to log update product action: {e}")
-    
-    # Get category name from relationship
-    category_name = product.category.name if product.category else None
-    
-    return AdminProductResponse(
-        id=str(product.id),
-        title=product.title,
-        price=product.price,
-        category=category_name,
-        condition=product.condition,
-        stock_quantity=product.stock_quantity,
-        stock_status=product.stock_status,
-        is_active=product.is_active,
-        is_sold=product.is_sold,
-        is_verified=product.is_verified,
-        is_flagged=product.is_flagged,
-        images=product.images or [],
-        owner_id=str(product.owner_id),
-        created_at=product.created_at
-    )
 
 
 @router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -4340,9 +4132,9 @@ async def delete_admin_product(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Removed Listing",
-            action_type="product",
-            target_type="product",
+            action="Removed listing",
+            action_type="listing",
+            target_type="listing",
             target_id=product_id_str,
             target_identifier=product_title
         )
@@ -4674,7 +4466,7 @@ async def update_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Updated User",
+            action="Updated user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -4767,7 +4559,7 @@ async def ban_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Banned User",
+            action="Banned user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -4845,7 +4637,7 @@ async def unban_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Unbanned User",
+            action="Unbanned user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -4943,7 +4735,7 @@ async def suspend_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Suspended User",
+            action="Suspended user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -5028,7 +4820,7 @@ async def unsuspend_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Unsuspended User",
+            action="Reinstate user",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -5127,7 +4919,7 @@ async def reset_user_password(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Reset Password",
+            action="Reset password",
             action_type="user",
             target_type="user",
             target_id=str(user.id),
@@ -5423,7 +5215,7 @@ async def delete_admin_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Deleted User",
+            action="User deleted",
             action_type="user",
             target_type="user",
             target_id=str(user_id_int),
@@ -5624,7 +5416,7 @@ async def bulk_approve_reports(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Approved Reports",
+                action="Approved reports",
                 action_type="report",
                 target_type="report",
                 target_id=",".join(map(str, approved_ids)),
@@ -5644,7 +5436,7 @@ async def bulk_approve_reports(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk approve operation failed: {str(e)}"
+            detail=f"Approve operation failed: {str(e)}"
         )
 
 
@@ -5705,7 +5497,7 @@ async def bulk_reject_reports(
             log_audit_action(
                 db=db,
                 performed_by_id=performed_by_id_int,
-                action="Bulk Rejected Reports",
+                action="Rejected reports",
                 action_type="report",
                 target_type="report",
                 target_id=",".join(map(str, rejected_ids)),
@@ -5725,7 +5517,7 @@ async def bulk_reject_reports(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk reject operation failed: {str(e)}"
+            detail=f"Reject operation failed: {str(e)}"
         )
 
 
@@ -5784,9 +5576,9 @@ async def approve_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Approved Report",
+            action="Approved report",
             action_type="report",
-            target_type="product",
+            target_type="listing",
             target_id=str(report.product_id),
             target_identifier=product_title,
             details=f"Report #{report_id} approved, product deactivated"
@@ -5852,9 +5644,9 @@ async def reject_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Rejected Report",
+            action="Rejected report",
             action_type="report",
-            target_type="product",
+            target_type="listing",
             target_id=str(report.product_id),
             target_identifier=product_title,
             details=f"Report #{report_id} rejected and deleted"
@@ -5918,9 +5710,9 @@ async def review_report(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action="Reviewed Report",
+            action="Reviewed report",
             action_type="report",
-            target_type="product",
+            target_type="listing",
             target_id=str(report.product_id),
             target_identifier=product_title,
             details=f"Report #{report_id} reviewed, product reactivated"
@@ -6006,7 +5798,7 @@ async def apply_spotlight(
         log_audit_action(
             db=db,
             performed_by_id=user_id_int,
-            action="Applied Spotlight",
+            action="Applied spotlight to listing",
             action_type="spotlight",
             target_type="product",
             target_id=str(product_id_int),
@@ -6089,9 +5881,9 @@ async def remove_spotlight(
         log_audit_action(
             db=db,
             performed_by_id=user_id_int,
-            action="Removed Spotlight",
+            action="Removed spotlight from listing",
             action_type="spotlight",
-            target_type="product",
+            target_type="listing",
             target_id=str(product_id_int),
             target_identifier=product_title
         )
@@ -6148,22 +5940,22 @@ async def get_spotlight_history(
     """
     Get spotlight history (Admin or Moderator with can_see_spotlight_history permission).
     
-    Returns a paginated list of spotlight history entries, including
-    applied, expired, and removed spotlights. Supports filtering by
-    product, action type, and date range.
+    Returns a paginated list of spotlights (parent) with nested arrays of related
+    products from spotlight_history (child). Each spotlight includes all its related
+    history entries. Supports filtering by product, status, and date range.
     
     Args:
         current_user_id: Current authenticated user ID
         db: Database session
         page: Page number
         page_size: Items per page
-        product_id: Filter by product ID
-        status: Filter by action type
-        date_from: Filter from date
-        date_to: Filter to date
+        product_id: Filter by product ID (filters spotlights by product_id)
+        status: Filter by spotlight status (active, expired, removed)
+        date_from: Filter from date (filters by spotlight start_time)
+        date_to: Filter to date (filters by spotlight end_time)
         
     Returns:
-        SpotlightHistoryListResponse: Paginated list of history entries
+        SpotlightHistoryListResponse: Paginated list of spotlights with nested history entries
         
     Raises:
         HTTPException: If user doesn't have permission
@@ -6303,7 +6095,7 @@ async def create_user(
         log_audit_action(
             db=db,
             performed_by_id=performed_by_id_int,
-            action=f"Created {user_type_name.capitalize()}",
+            action=f"Created {user_type_name.capitalize()} user",
             action_type="user",
             target_type="user",
             target_id=str(new_user.id),

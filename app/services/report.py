@@ -20,7 +20,8 @@ from app.schemas.report import (
     ReportedProductResponse,
     ReportedProductListResponse,
     AdminReportDetailResponse,
-    AdminReportListResponse
+    AdminReportListResponse,
+    ProductReportListItem
 )
 
 
@@ -182,7 +183,6 @@ class ProductReportService:
             ).filter(
                 or_(
                     Product.title.ilike(search_term),
-                    ProductReport.reason.ilike(search_term)
                 )
             ).distinct()
             
@@ -263,16 +263,65 @@ class ProductReportService:
             if not latest_report:
                 continue
             
-            # Get status name
+            # Get status name for latest report
             status_obj = self.db.query(ReportStatus).filter(
                 ReportStatus.id == latest_report.status_id
             ).first()
             status_name = status_obj.status if status_obj else "unknown"
             
+            # Get all reports for this product (ordered by created_at descending)
+            all_reports_query = self.db.query(ProductReport).filter(
+                ProductReport.product_id == product_id_int
+            )
+            
+            # Apply the same filters to all reports
+            if status_filter:
+                status_obj = self.db.query(ReportStatus).filter(
+                    ReportStatus.status == status_filter.lower()
+                ).first()
+                if status_obj:
+                    all_reports_query = all_reports_query.filter(ProductReport.status_id == status_obj.id)
+            
+            if user_id:
+                try:
+                    user_id_int = int(user_id)
+                    all_reports_query = all_reports_query.filter(ProductReport.user_id == user_id_int)
+                except (ValueError, TypeError):
+                    pass
+            
+            if date_from:
+                all_reports_query = all_reports_query.filter(ProductReport.created_at >= date_from)
+            
+            if date_to:
+                all_reports_query = all_reports_query.filter(ProductReport.created_at <= date_to)
+            
+            all_reports = all_reports_query.order_by(desc(ProductReport.created_at)).all()
+            
+            # Build list of all reports
+            reports_list = []
+            for report in all_reports:
+                # Get status name for each report
+                report_status_obj = self.db.query(ReportStatus).filter(
+                    ReportStatus.id == report.status_id
+                ).first()
+                report_status_name = report_status_obj.status if report_status_obj else "unknown"
+                
+                reports_list.append(ProductReportListItem(
+                    id=str(report.id),
+                    user_id=str(report.user_id),
+                    user_email=report.user_email,
+                    user_username=report.user.username if report.user else None,
+                    reason=report.reason,
+                    status=report_status_name,
+                    created_at=report.created_at,
+                    updated_at=report.updated_at
+                ))
+            
             reported_products.append(ReportedProductResponse(
                 product_id=str(product_id_int),
                 product_title=product.title,
                 product_price=product.price,
+                product_is_flagged=product.is_flagged,
                 product_images=product.images or [],
                 product_owner_id=str(product.owner_id),
                 product_owner_username=product.owner.username if product.owner else None,
@@ -284,7 +333,8 @@ class ProductReportService:
                 latest_report_reason=latest_report.reason,
                 latest_report_status=status_name,
                 latest_report_created_at=latest_report.created_at,
-                first_reported_at=agg_result.first_reported_at
+                first_reported_at=agg_result.first_reported_at,
+                all_reports=reports_list
             ))
         
         total_pages = math.ceil(total / page_size) if total > 0 else 0
@@ -414,6 +464,7 @@ class ProductReportService:
     def approve_report(self, report_id: str) -> Dict[str, str]:
         """
         Approve a report and deactivate the product.
+        Approves all reports for the same product, not just the single report.
         
         Args:
             report_id: Report ID to approve
@@ -443,19 +494,29 @@ class ProductReportService:
         # Get approved status
         approved_status = self._get_status_by_name("approved")
         
-        # Update report status
-        report.status_id = approved_status.id
+        # Get product ID
+        product_id = report.product_id
+        
+        # Approve ALL reports for this product
+        all_product_reports = self.db.query(ProductReport).filter(
+            ProductReport.product_id == product_id
+        ).all()
+        
+        for product_report in all_product_reports:
+            product_report.status_id = approved_status.id
+        
         self.db.flush()
         
         # Deactivate product
-        product = self.db.query(Product).filter(Product.id == report.product_id).first()
+        product = self.db.query(Product).filter(Product.id == product_id).first()
         if product:
             product.is_active = False
+            product.is_flagged = 1
             self.db.flush()
         
         self.db.commit()
         
-        return {"message": "Report approved and product deactivated"}
+        return {"message": "All reports for this product approved and product deactivated"}
     
     def review_report(self, report_id: str) -> Dict[str, str]:
         """
@@ -497,6 +558,7 @@ class ProductReportService:
         product = self.db.query(Product).filter(Product.id == report.product_id).first()
         if product:
             product.is_active = True
+            product.is_flagged = 2
             self.db.flush()
         
         self.db.commit()

@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 from pydantic import BaseModel, Field
+from sqlalchemy import Integer
 
 
 class ProductReportRequest(BaseModel):
@@ -31,12 +32,29 @@ class ProductReportResponse(BaseModel):
         from_attributes = True
 
 
+class ProductReportListItem(BaseModel):
+    """Schema for a single report in the reports list."""
+    
+    id: str = Field(..., description="Report ID")
+    user_id: str = Field(..., description="User ID who reported")
+    user_email: str = Field(..., description="User email who reported")
+    user_username: Optional[str] = Field(None, description="Username who reported")
+    reason: str = Field(..., description="Reason for the report")
+    status: str = Field(..., description="Report status")
+    created_at: datetime = Field(..., description="Report creation timestamp")
+    updated_at: datetime = Field(..., description="Report last update timestamp")
+    
+    class Config:
+        from_attributes = True
+
+
 class ReportedProductResponse(BaseModel):
     """Schema for reported product in admin listing (aggregated by product)."""
     
     product_id: str = Field(..., description="Product ID")
     product_title: str = Field(..., description="Product title")
     product_price: Decimal = Field(..., description="Product price")
+    product_is_flagged:int = Field(..., description="Whether product is flagged")
     product_images: List[str] = Field(default_factory=list, description="Product images")
     product_owner_id: str = Field(..., description="Product owner ID")
     product_is_active: bool = Field(..., description="Whether product is currently active")
@@ -49,6 +67,7 @@ class ReportedProductResponse(BaseModel):
     latest_report_user_id: Optional[str] = Field(None, description="User ID who made the latest report")
     latest_report_user_username: Optional[str] = Field(None, description="Username who made the latest report")
     product_owner_username: Optional[str] = Field(None, description="Username of the product owner")
+    all_reports: List[ProductReportListItem] = Field(default_factory=list, description="List of all reports for this product")
 
 class ReportedProductListResponse(BaseModel):
     """Schema for paginated list of reported products."""

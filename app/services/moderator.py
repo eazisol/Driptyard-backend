@@ -88,14 +88,15 @@ class ModeratorService:
         # Apply search filter
         if search:
             search_term = f"%{search}%"
-            query = query.filter(
-                or_(
-                    User.email.ilike(search_term),
-                    User.username.ilike(search_term),
-                    User.first_name.ilike(search_term),
-                    User.last_name.ilike(search_term)
-                )
-            )
+            query = query.filter(User.username.ilike(search_term))
+            # query = query.filter(
+            #     or_(
+            #         User.email.ilike(search_term),
+            #         User.username.ilike(search_term),
+            #         User.first_name.ilike(search_term),
+            #         User.last_name.ilike(search_term)
+            #     )
+            # )
         
         # Apply status filter
         if status:

@@ -16,7 +16,7 @@ import math
 from urllib.parse import urlparse
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func, case
+from sqlalchemy import or_, and_, func, case, cast, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import settings
@@ -266,7 +266,8 @@ class ProductService:
         sizes: Optional[List[str]] = None,
         colors: Optional[List[str]] = None,
         conditions: Optional[List[str]] = None,
-        delivery: Optional[List[str]] = None
+        delivery: Optional[List[str]] = None,
+        skip_spotlight_priority: bool = False
     ):
         """
         Apply filters and sorting to a product query.
@@ -337,7 +338,8 @@ class ProductService:
             query = query.filter(
                 or_(
                     Product.location.ilike(f"%{location}%"),
-                    Product.meetup_location.ilike(f"%{location}%")
+                    Product.meetup_location.ilike(f"%{location}%"),
+                    cast(Product.meetup_locations, Text).ilike(f"%{location}%")
                 )
             )
         
@@ -430,57 +432,94 @@ class ProductService:
             if delivery_conditions:
                 query = query.filter(or_(*delivery_conditions))
         
-        # Sorting logic with spotlight prioritization
+        # Sorting logic with optional spotlight prioritization
         # Spotlighted products (is_spotlighted=true AND spotlight_end_time != null) appear first
-        spotlight_case = case(
-            (and_(Product.is_spotlighted == True, Product.spotlight_end_time.isnot(None)), 1),
-            else_=0
-        )
+        # Skip spotlight priority for user's own listings
+        if not skip_spotlight_priority:
+            spotlight_case = case(
+                (and_(Product.is_spotlighted == True, Product.spotlight_end_time.isnot(None)), 1),
+                else_=0
+            )
         
         if sort == "price_low_high":
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.price.asc(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.price.asc(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.price.asc(),
+                    Product.created_at.desc()
+                )
         elif sort == "price_high_low":
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.price.desc(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.price.desc(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.price.desc(),
+                    Product.created_at.desc()
+                )
         elif sort == "verified":
             # Recently verified products first
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.is_verified.desc(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.is_verified.desc(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.is_verified.desc(),
+                    Product.created_at.desc()
+                )
         elif sort == "popular":
             # Most popular (by rating and review count)
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.rating.desc(),
-                Product.review_count.desc(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.rating.desc(),
+                    Product.review_count.desc(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.rating.desc(),
+                    Product.review_count.desc(),
+                    Product.created_at.desc()
+                )
         elif sort == "grid_manager":
             # Grid manager sort (similar to newest but may have custom logic)
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.created_at.desc()
+                )
         else:  # Default: newest
-            query = query.order_by(
-                spotlight_case.desc(),
-                Product.spotlight_end_time.desc().nullslast(),
-                Product.created_at.desc()
-            )
+            if not skip_spotlight_priority:
+                query = query.order_by(
+                    spotlight_case.desc(),
+                    Product.spotlight_end_time.desc().nullslast(),
+                    Product.created_at.desc()
+                )
+            else:
+                query = query.order_by(
+                    Product.created_at.desc()
+                )
         
         return query
     
@@ -711,10 +750,23 @@ class ProductService:
         page: int,
         page_size: int,
         status_filter: Optional[str] = None,
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        category: Optional[str] = None,
+        product_type: Optional[str] = None,
+        sub_category: Optional[str] = None,
+        gender: Optional[str] = None,
+        location: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        sort: Optional[str] = "newest",
+        brands: Optional[List[str]] = None,
+        sizes: Optional[List[str]] = None,
+        colors: Optional[List[str]] = None,
+        conditions: Optional[List[str]] = None,
+        delivery: Optional[List[str]] = None
     ) -> ProductPaginationResponse:
         """
-        List products created by a user.
+        List products created by a user with comprehensive filtering.
         
         Args:
             user_id: User ID (integer)
@@ -722,6 +774,19 @@ class ProductService:
             page_size: Items per page
             status_filter: Filter by status (active, inactive, sold, verification_pending)
             search: Search term
+            category: Filter by category
+            product_type: Filter by product type
+            sub_category: Filter by sub-category
+            gender: Filter by gender
+            location: Filter by location
+            min_price: Minimum price filter
+            max_price: Maximum price filter
+            sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+            brands: Filter by brands/designers (array)
+            sizes: Filter by sizes (array)
+            colors: Filter by colors (array)
+            conditions: Filter by conditions (array)
+            delivery: Filter by delivery method (array)
             
         Returns:
             ProductPaginationResponse: Paginated list of user's products
@@ -746,6 +811,7 @@ class ProductService:
         
         query = self.db.query(Product).filter(Product.owner_id == owner_id)
         
+        # Apply status filter first
         if status_filter:
             normalized_status = status_filter.lower()
             if normalized_status == "active":
@@ -762,18 +828,29 @@ class ProductService:
                     detail="Invalid status filter. Allowed values: active, inactive, sold, verification_pending"
                 )
         
-        if search:
-            search_term = f"%{search}%"
-            query = query.filter(
-                or_(
-                    Product.title.ilike(search_term),
-                    Product.description.ilike(search_term)
-                )
-            )
+        # Apply comprehensive filters and sorting
+        query = self._apply_filters_and_sorting(
+            query,
+            category=category,
+            product_type=product_type,
+            sub_category=sub_category,
+            gender=gender,
+            location=location,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            sort=sort,
+            brands=brands,
+            sizes=sizes,
+            colors=colors,
+            conditions=conditions,
+            delivery=delivery,
+            skip_spotlight_priority=True  # Don't apply spotlight priority to user's own listings
+        )
         
         total = query.count()
         offset = (page - 1) * page_size
-        products = query.order_by(Product.created_at.desc()).offset(offset).limit(page_size).all()
+        products = query.offset(offset).limit(page_size).all()
         
         # For user's own products, is_followed is False (users don't follow their own products)
         # Seller is the same as the user, so seller_is_followed is also False (can't follow self)
@@ -1044,8 +1121,8 @@ class ProductService:
             required_fields.append("productType")
         if not brand:
             required_fields.append("brand")
-        if not productStyle:
-            required_fields.append("productStyle")
+        # if not productStyle:
+            # required_fields.append("productStyle")
         if required_fields:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1726,3 +1803,34 @@ class ProductService:
         product.is_active = False
         self.db.commit()
 
+    
+    def deactivate_user_products(self, user_id: int) -> Tuple[int, List[str], List[str]]:
+        """
+        Deactivate all active products for a user.
+        
+        Args:
+            user_id: User ID
+            
+        Returns:
+            Tuple[int, List[str], List[str]]: Count, list of IDs, list of titles
+        """
+        products = self.db.query(Product).filter(
+            Product.owner_id == user_id,
+            Product.is_active == True
+        ).all()
+        
+        deactivated_count = 0
+        deactivated_ids = []
+        deactivated_titles = []
+        
+        for product in products:
+            product.is_active = False
+            product.is_spotlighted = False  # Also remove spotlight if active
+            deactivated_count += 1
+            deactivated_ids.append(str(product.id))
+            deactivated_titles.append(product.title)
+        
+        if deactivated_count > 0:
+            self.db.commit()
+            
+        return deactivated_count, deactivated_ids, deactivated_titles

@@ -175,31 +175,73 @@ async def list_my_products(
         alias="status",
         description="Filter by status: active, inactive, sold, verification_pending"
     ),
-    search: Optional[str] = Query(None, description="Search by title or description"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    product_type: Optional[str] = Query(None, description="Filter by product type"),
+    sub_category: Optional[str] = Query(None, description="Filter by sub-category"),
+    gender: Optional[str] = Query(None, description="Filter by gender"),
+    location: Optional[str] = Query(None, description="Filter by location"),
+    search: Optional[str] = Query(None, description="Search in name and description"),
+    min_price: Optional[float] = Query(None, ge=0, description="Minimum price"),
+    max_price: Optional[float] = Query(None, ge=0, description="Maximum price"),
+    sort: Optional[str] = Query("newest", description="Sort order: newest, price_low_high, price_high_low, verified, popular, grid_manager"),
+    brands: Optional[List[str]] = Query(None, description="Filter by brands/designers (array)"),
+    sizes: Optional[List[str]] = Query(None, description="Filter by sizes (array)"),
+    colors: Optional[List[str]] = Query(None, description="Filter by colors (array)"),
+    conditions: Optional[List[str]] = Query(None, description="Filter by conditions (array)"),
+    delivery: Optional[List[str]] = Query(None, description="Filter by delivery method (array)"),
     db: Session = Depends(get_db)
 ):
     """
     List products created by the current authenticated user.
 
-    Supports filtering by listing status and search term for managing listings.
+    Supports comprehensive filtering including status, category, price range, brands, sizes, colors, conditions, delivery methods, and search.
 
     Args:
         current_user_id: Current authenticated user ID
         page: Page number
         page_size: Items per page
         status_filter: Filter by status (active, inactive, sold, verification_pending)
+        category: Filter by category
+        product_type: Filter by product type
+        sub_category: Filter by sub-category
+        gender: Filter by gender
+        location: Filter by location
         search: Search term
+        min_price: Minimum price filter
+        max_price: Maximum price filter
+        sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+        brands: Filter by brands/designers (array)
+        sizes: Filter by sizes (array)
+        colors: Filter by colors (array)
+        conditions: Filter by conditions (array)
+        delivery: Filter by delivery method (array)
         db: Database session
 
     Returns:
         ProductPaginationResponse: Paginated list of user's products
     """
     service = ProductService(db)
-    return service.list_user_products(current_user_id, page, page_size, status_filter, search)
+    return service.list_user_products(
+        current_user_id, page, page_size, status_filter, search,
+        category=category,
+        product_type=product_type,
+        sub_category=sub_category,
+        gender=gender,
+        location=location,
+        min_price=min_price,
+        max_price=max_price,
+        sort=sort,
+        brands=brands,
+        sizes=sizes,
+        colors=colors,
+        conditions=conditions,
+        delivery=delivery
+    )
 
 
 @router.get("/", response_model=ProductPaginationResponse)
 async def list_products(
+    
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(12, ge=1, le=100, description="Items per page"),
     type: Optional[str] = Query(None, description="Filter type: 'spotlighted' for spotlighted products, 'recommended' for recommended products, or omit for all products"),
@@ -330,18 +372,46 @@ async def get_seller_listings(
     seller_id: str,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(12, ge=1, le=100, description="Items per page"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    product_type: Optional[str] = Query(None, description="Filter by product type"),
+    sub_category: Optional[str] = Query(None, description="Filter by sub-category"),
+    gender: Optional[str] = Query(None, description="Filter by gender"),
+    location: Optional[str] = Query(None, description="Filter by location"),
+    search: Optional[str] = Query(None, description="Search in name and description"),
+    min_price: Optional[float] = Query(None, ge=0, description="Minimum price"),
+    max_price: Optional[float] = Query(None, ge=0, description="Maximum price"),
+    sort: Optional[str] = Query("newest", description="Sort order: newest, price_low_high, price_high_low, verified, popular, grid_manager"),
+    brands: Optional[List[str]] = Query(None, description="Filter by brands/designers (array)"),
+    sizes: Optional[List[str]] = Query(None, description="Filter by sizes (array)"),
+    colors: Optional[List[str]] = Query(None, description="Filter by colors (array)"),
+    conditions: Optional[List[str]] = Query(None, description="Filter by conditions (array)"),
+    delivery: Optional[List[str]] = Query(None, description="Filter by delivery method (array)"),
     db: Session = Depends(get_db)
 ):
     """
     Get all product listings for a specific seller (open route, no authentication required).
     
-    Returns all products created by the specified seller with pagination support.
+    Returns all products created by the specified seller with comprehensive filtering support.
     This is a public endpoint that can be accessed without authentication.
     
     Args:
         seller_id: Seller ID (integer)
         page: Page number (starts from 1)
         page_size: Number of items per page
+        category: Filter by category
+        product_type: Filter by product type
+        sub_category: Filter by sub-category
+        gender: Filter by gender
+        location: Filter by location
+        search: Search term
+        min_price: Minimum price filter
+        max_price: Maximum price filter
+        sort: Sort order (newest, price_low_high, price_high_low, verified, popular, grid_manager)
+        brands: Filter by brands/designers (array)
+        sizes: Filter by sizes (array)
+        colors: Filter by colors (array)
+        conditions: Filter by conditions (array)
+        delivery: Filter by delivery method (array)
         db: Database session
         
     Returns:
@@ -352,7 +422,22 @@ async def get_seller_listings(
     """
     service = ProductService(db)
     # Return all products for the seller (no status filter)
-    return service.list_user_products(seller_id, page, page_size, None, None)
+    return service.list_user_products(
+        seller_id, page, page_size, None, search,
+        category=category,
+        product_type=product_type,
+        sub_category=sub_category,
+        gender=gender,
+        location=location,
+        min_price=min_price,
+        max_price=max_price,
+        sort=sort,
+        brands=brands,
+        sizes=sizes,
+        colors=colors,
+        conditions=conditions,
+        delivery=delivery
+    )
 
 
 @router.get("/{product_id}", response_model=ProductDetailResponse)

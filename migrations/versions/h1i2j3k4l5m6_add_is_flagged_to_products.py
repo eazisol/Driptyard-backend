@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add is_flagged column to products table
-    op.add_column('products', sa.Column('is_flagged', sa.Boolean(), nullable=False, server_default='false'))
+    op.add_column('products', sa.Column('is_flagged', sa.Integer(), nullable=False, server_default='false'))
     
     # Create index for quick lookups
     op.create_index(op.f('ix_products_is_flagged'), 'products', ['is_flagged'], unique=False)
