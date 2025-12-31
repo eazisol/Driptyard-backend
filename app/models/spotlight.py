@@ -26,7 +26,7 @@ class Spotlight(UserProductBaseModel):
     duration_hours = Column(Integer, nullable=False)
     
     # Status tracking
-    status = Column(String(20), nullable=False, default="active", index=True)  # active, expired, removed
+    status = Column(String(20), nullable=False, default="active", index=True)  # active, expired, removed, paused
     
     # Relationships
     product = relationship("Product", foreign_keys=[product_id])
@@ -47,7 +47,7 @@ class SpotlightHistory(UserProductBaseModel):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     
     # Action information
-    action = Column(String(20), nullable=False, index=True)  # applied, expired, removed
+    action = Column(String(20), nullable=False, index=True)  # applied, expired, removed, paused, resumed
     applied_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     removed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     

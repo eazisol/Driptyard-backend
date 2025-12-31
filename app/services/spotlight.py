@@ -15,6 +15,7 @@ from sqlalchemy import and_, or_
 from app.models.spotlight import Spotlight, SpotlightHistory
 from app.models.product import Product
 from app.models.user import User
+from app.services.audit_log import AuditLogService
 from app.security import check_spotlight_permission, check_remove_spotlight_permission
 from app.schemas.spotlight import (
     SpotlightResponse,
@@ -258,6 +259,155 @@ class SpotlightService:
         self.db.commit()
         
         return {"message": "Spotlight removed successfully"}
+    
+    def pause_spotlight(self, product_id: int, reason: str, admin_user_id: Optional[int] = None, auto_commit: bool = True) -> bool:
+        """
+        Pause spotlight for a product.
+        
+        Args:
+            product_id: Product ID to pause spotlight for
+            reason: Reason for pausing
+            admin_user_id: ID of admin/moderator (optional)
+            auto_commit: Whether to commit changes (default True)
+            
+        Returns:
+            bool: True if paused, False otherwise
+        """
+        # Get active spotlight
+        spotlight = self.db.query(Spotlight).filter(
+            and_(
+                Spotlight.product_id == product_id,
+                Spotlight.status == "active"
+            )
+        ).first()
+        
+        if not spotlight:
+            return False
+            
+        # Get product
+        product = self.db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return False
+            
+        # Update spotlight status
+        spotlight.status = "paused"
+        
+        # Update product
+        product.is_spotlighted = False
+        
+        # Create history entry
+        history = SpotlightHistory(
+            spotlight_id=spotlight.id,
+            product_id=product_id,
+            action="paused",
+            applied_by=spotlight.applied_by,
+            removed_by=admin_user_id,
+            start_time=spotlight.start_time,
+            end_time=spotlight.end_time,
+            duration_hours=spotlight.duration_hours
+        )
+        self.db.add(history)
+        
+        # Log to Audit Logs if admin_user_id provided
+        if admin_user_id:
+            try:
+                audit_log = AuditLogService(self.db)
+                audit_log.log_action(
+                    performed_by_id=admin_user_id,
+                    action="Spotlight status changed to Paused",
+                    action_type="spotlight",
+                    target_type="product",
+                    target_id=str(product_id),
+                    target_identifier=product.title,
+                    details=f"Reason: {reason}"
+                )
+            except Exception as e:
+                # Log error but don't fail the operation
+                print(f"Failed to log audit action: {e}")
+        
+        if auto_commit:
+            self.db.commit()
+        return True
+
+    def resume_spotlight(self, product_id: int, reason: str, admin_user_id: Optional[int] = None, auto_commit: bool = True) -> bool:
+        """
+        Resume a paused spotlight for a product.
+        
+        Args:
+            product_id: Product ID to resume spotlight for
+            reason: Reason for resuming
+            admin_user_id: ID of admin/moderator (optional)
+            auto_commit: Whether to commit changes (default True)
+            
+        Returns:
+            bool: True if resumed, False otherwise
+        """
+        # Get paused spotlight
+        spotlight = self.db.query(Spotlight).filter(
+            and_(
+                Spotlight.product_id == product_id,
+                Spotlight.status == "paused"
+            )
+        ).first()
+        
+        if not spotlight:
+            return False
+            
+        # Check if expired
+        now = datetime.now(timezone.utc)
+        if spotlight.end_time <= now:
+            spotlight.status = "expired"
+            self.db.commit()
+            return False
+            
+        # Get product
+        product = self.db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return False
+            
+        # Product must be verified and active to resume
+        if not product.is_verified or not product.is_active:
+            return False
+            
+        # Update spotlight status
+        spotlight.status = "active"
+        
+        # Update product
+        product.is_spotlighted = True
+        
+        # Create history entry
+        history = SpotlightHistory(
+            spotlight_id=spotlight.id,
+            product_id=product_id,
+            action="resumed",
+            applied_by=spotlight.applied_by,
+            removed_by=admin_user_id,
+            start_time=spotlight.start_time,
+            end_time=spotlight.end_time,
+            duration_hours=spotlight.duration_hours
+        )
+        self.db.add(history)
+        
+        # Log to Audit Logs if admin_user_id provided
+        if admin_user_id:
+            try:
+                audit_log = AuditLogService(self.db)
+                audit_log.log_action(
+                    performed_by_id=admin_user_id,
+                    action="Spotlight status changed to Unpaused / Resumed",
+                    action_type="spotlight",
+                    target_type="product",
+                    target_id=str(product_id),
+                    target_identifier=product.title,
+                    details=f"Reason: {reason}"
+                )
+            except Exception as e:
+                # Log error but don't fail the operation
+                print(f"Failed to log audit action: {e}")
+        
+        if auto_commit:
+            self.db.commit()
+        return True
     
     def get_active_spotlights(
         self,

@@ -1049,6 +1049,16 @@ async def bulk_update_product_status(
                     product.is_active = is_active
                     updated_ids.append(product_id)
                     updated_titles.append(product.title) # Capture title
+                    
+                    # Update spotlight status
+                    spotlight_service = SpotlightService(db)
+                    reason = "Product was Activated." if is_active else "Product became Inactive."
+                    if is_active:
+                        if product.is_verified: # Only resume if also verified
+                            spotlight_service.resume_spotlight(product.id, reason, admin_user_id=int(current_user_id), auto_commit=False)
+                    else:
+                        spotlight_service.pause_spotlight(product.id, reason, admin_user_id=int(current_user_id), auto_commit=False)
+
         
         db.commit()
         
@@ -1138,6 +1148,16 @@ async def bulk_update_product_verification(
                     product.is_verified = is_verified
                     updated_ids.append(product_id)
                     updated_titles.append(product.title) # Capture title
+                    
+                    # Update spotlight status
+                    spotlight_service = SpotlightService(db)
+                    reason = "Product was Verified." if is_verified else "Product became Unverified."
+                    if is_verified:
+                        if product.is_active: # Only resume if also active
+                            spotlight_service.resume_spotlight(product.id, reason, admin_user_id=int(current_user_id), auto_commit=False)
+                    else:
+                        spotlight_service.pause_spotlight(product.id, reason, admin_user_id=int(current_user_id), auto_commit=False)
+
         
         db.commit()
         
@@ -1253,16 +1273,16 @@ async def update_admin_product(
         else:
             product.condition = None
     
+    # Track initial status for auto-spotlight logic
+    initial_is_active = product.is_active
+    initial_is_verified = product.is_verified
+
     # Update status fields
     if "is_active" in update_dict:
         product.is_active = update_dict["is_active"]
-        if product.is_active is False:
-            product.is_spotlighted = False
         
     if "is_verified" in update_dict:
         product.is_verified = update_dict["is_verified"]
-        if update_dict["is_verified"] is False:
-            product.is_spotlighted = False
 
     if "stock_status" in update_dict:
         # Validate stock_status
@@ -1274,16 +1294,19 @@ async def update_admin_product(
             )
         product.stock_status = update_dict["stock_status"]
     
-    # Check and update spotlight status if product exists in spotlight table
-    from app.models.spotlight import Spotlight
-    spotlight = db.query(Spotlight).filter(Spotlight.product_id == product_id_int).first()
-    if spotlight:
-        # Check if product is not verified or not active (using updated values)
-        if not product.is_verified or not product.is_active:
-            spotlight.status = "paused"
-        if  product.is_verified or  product.is_active:
-            spotlight.status = "active"
-            product.is_spotlighted = True
+    # Check and update spotlight status using service
+    spotlight_service = SpotlightService(db)
+    performer_id = int(current_user_id)
+    
+    # If product became inactive or unverified, pause spotlight
+    if (initial_is_active and not product.is_active) or (initial_is_verified and not product.is_verified):
+        spotlight_service.pause_spotlight(product.id, "Product became Unverified or Inactive.", admin_user_id=performer_id, auto_commit=False)
+    
+    # If product became active and verified, resume spotlight
+    elif (not initial_is_active and product.is_active) or (not initial_is_verified and product.is_verified):
+        if product.is_active and product.is_verified:
+            spotlight_service.resume_spotlight(product.id, "Product was Verified or Activated.", admin_user_id=performer_id, auto_commit=False)
+
     
     db.commit()
     db.refresh(product)
@@ -1924,7 +1947,7 @@ async def bulk_suspend_users(
                     user.suspended_at = datetime.now()
                     
                     # Deactivate user products
-                    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id)
+                    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id, performer_id=int(current_user_id))
                     
                     # Log product deactivation if any
                     if deactivated_count > 0:
@@ -2456,7 +2479,7 @@ async def suspend_user(
     
     # Deactivate user products
     product_service = ProductService(db)
-    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id)
+    deactivated_count, deactivated_ids, deactivated_titles = product_service.deactivate_user_products(user.id, performer_id=int(current_user_id))
     
     db.commit()
     db.refresh(user)

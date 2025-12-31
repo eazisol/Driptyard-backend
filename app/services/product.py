@@ -1612,6 +1612,10 @@ class ProductService:
         product.verification_expires_at = None
         product.verification_attempts = 0
         
+        # Automatic Spotlight Resume logic
+        spotlight_service = SpotlightService(self.db)
+        spotlight_service.resume_spotlight(product.id, "Product was Verified or Activated.", admin_user_id=user_id_int)
+        
         self.db.commit()
         self.db.refresh(product)
         
@@ -1667,12 +1671,30 @@ class ProductService:
                 detail="You don't have permission to update this product"
             )
         
+        # Track initial status for auto-spotlight logic
+        initial_is_active = product.is_active
+        initial_is_verified = product.is_verified
+        
+        # Update fields
         update_data = product_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(product, field, value)
         
         self.db.commit()
         self.db.refresh(product)
+        
+        # Automatic Spotlight Pause/Resume logic
+        spotlight_service = SpotlightService(self.db)
+        performer_id = int(user_id)
+        
+        # If product became inactive or unverified, pause spotlight
+        if (initial_is_active and not product.is_active) or (initial_is_verified and not product.is_verified):
+            spotlight_service.pause_spotlight(product.id, "Product became Unverified or Inactive.", admin_user_id=performer_id)
+        
+        # If product became active and verified, resume spotlight
+        elif (not initial_is_active and product.is_active) or (not initial_is_verified and product.is_verified):
+            if product.is_active and product.is_verified:
+                spotlight_service.resume_spotlight(product.id, "Product was Verified or Activated.", admin_user_id=performer_id)
         
         seller = self.db.query(User).filter(User.id == product.owner_id).first()
         
@@ -1804,12 +1826,13 @@ class ProductService:
         self.db.commit()
 
     
-    def deactivate_user_products(self, user_id: int) -> Tuple[int, List[str], List[str]]:
+    def deactivate_user_products(self, user_id: int, performer_id: Optional[int] = None) -> Tuple[int, List[str], List[str]]:
         """
         Deactivate all active products for a user.
         
         Args:
             user_id: User ID
+            performer_id: ID of the person performing deactivation (admin/moderator)
             
         Returns:
             Tuple[int, List[str], List[str]]: Count, list of IDs, list of titles
@@ -1823,9 +1846,12 @@ class ProductService:
         deactivated_ids = []
         deactivated_titles = []
         
+        spotlight_service = SpotlightService(self.db)
         for product in products:
             product.is_active = False
-            product.is_spotlighted = False  # Also remove spotlight if active
+            # product.is_spotlighted = False  # Handled by spotlight_service.pause_spotlight
+            spotlight_service.pause_spotlight(product.id, "Product became Unverified or Inactive.", admin_user_id=performer_id)
+            
             deactivated_count += 1
             deactivated_ids.append(str(product.id))
             deactivated_titles.append(product.title)
