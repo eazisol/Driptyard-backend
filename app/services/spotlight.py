@@ -934,6 +934,7 @@ class SpotlightService:
             "updated_count": success_count,
             "failed_count": failed_count,
             "failed_product_ids": [f.product_id for f in failed_products],
+            "spotlighted_product_ids": [f.product_id for f in spotlighted_products],
             "data": response_data
         }
     
@@ -1072,6 +1073,7 @@ class SpotlightService:
             "updated_count": updated_count,
             "failed_count": failed_count,
             "failed_product_ids": [f.product_id for f in failed_products],
+            "spotlighted_product_ids": [f.product_id for f in updated_products],
             "data": response_data
         }
     
@@ -1190,6 +1192,7 @@ class SpotlightService:
             "updated_count": removed_count,
             "failed_count": failed_count,
             "failed_product_ids": [f.product_id for f in failed_products],
+            "spotlighted_product_ids": [f.product_id for f in removed_products],
             "data": response_data
         }
 

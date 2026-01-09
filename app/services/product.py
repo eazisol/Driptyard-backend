@@ -162,6 +162,7 @@ class ProductService:
             deal_method=product.deal_method,
             product_type=str(product.product_type_id) if product.product_type_id else None,
             product_style=product.product_style,
+            size=product.size,
             colors=product.colors or [],
             purchase_button_enabled=product.purchase_button_enabled,
             seller=self._get_seller_info(seller, is_followed=seller_is_followed),
@@ -199,6 +200,11 @@ class ProductService:
         if product.brand_id:
             brand = self.db.query(Brand).filter(Brand.id == product.brand_id).first()
             brand_name = brand.name if brand else None
+        
+        product_ids = [product.id]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
+        is_followed = product.id in followed_product_ids
+        
         
         return ProductDetailResponse(
             id=str(product.id),
@@ -240,6 +246,8 @@ class ProductService:
             tracking_provided=product.tracking_provided,
             shipping_address=product.shipping_address,
             meetup_locations=product.meetup_locations,
+            meetup_anytime=product.meetup_anytime,
+            meetup_schedules=product.meetup_schedules,
             measurement_chest=product.measurement_chest,
             measurement_sleeve_length=product.measurement_sleeve_length,
             measurement_length=product.measurement_length,
@@ -247,7 +255,8 @@ class ProductService:
             measurement_shoulders=product.measurement_shoulders,
             seller=self._get_seller_info(seller, is_followed=self._is_following_seller(user_id, seller.id)),
             created_at=product.created_at,
-            updated_at=product.updated_at
+            updated_at=product.updated_at,
+            is_followed=is_followed
         )
     
     def _apply_filters_and_sorting(
@@ -601,7 +610,8 @@ class ProductService:
             sizes=sizes,
             colors=colors,
             conditions=conditions,
-            delivery=delivery
+            delivery=delivery,
+            skip_spotlight_priority=True
         )
         
         total = query.count()
@@ -710,7 +720,8 @@ class ProductService:
             sizes=sizes,
             colors=colors,
             conditions=conditions,
-            delivery=delivery
+            delivery=delivery,
+            skip_spotlight_priority=True
         )
         
         total = query.count()
@@ -747,6 +758,7 @@ class ProductService:
     def list_user_products(
         self,
         user_id: str,
+        seller_id: str,
         page: int,
         page_size: int,
         status_filter: Optional[str] = None,
@@ -795,7 +807,7 @@ class ProductService:
             HTTPException: If user not found or invalid status filter
         """
         try:
-            owner_id = int(user_id)
+            owner_id = int(seller_id)
         except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -851,10 +863,24 @@ class ProductService:
         total = query.count()
         offset = (page - 1) * page_size
         products = query.offset(offset).limit(page_size).all()
+        # Get followed product IDs if user is authenticated
+        product_ids = [product.id for product in products]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
         
+        # Get followed seller IDs if user is authenticated
+        seller_ids = [product.owner_id for product in products]
+        followed_seller_ids = self._get_followed_seller_ids(user_id, seller_ids)
+        print("products", products)
+        items = []
+        for product in products:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if seller:
+                is_followed = product.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(product, seller, is_followed, seller_is_followed))
         # For user's own products, is_followed is False (users don't follow their own products)
         # Seller is the same as the user, so seller_is_followed is also False (can't follow self)
-        items = [self._product_to_list_response(product, user, is_followed=False, seller_is_followed=False) for product in products]
+        #items = [self._product_to_list_response(product, user, is_followed=False, seller_is_followed=False) for product in products]
         total_pages = math.ceil(total / page_size) if total > 0 else 0
         
         return ProductPaginationResponse(
@@ -941,7 +967,8 @@ class ProductService:
             sizes=sizes,
             colors=colors,
             conditions=conditions,
-            delivery=delivery
+            delivery=delivery,
+            skip_spotlight_priority=True
         )
         
         total = query.count()
@@ -1052,6 +1079,8 @@ class ProductService:
         meetupLocation = form_data.get("meetupLocation")
         meetupTime = form_data.get("meetupTime")
         meetupLocations_raw = form_data.get("meetupLocations")
+        meetupAnytime_raw = form_data.get("meetupAnytime")
+        meetupSchedules_raw = form_data.get("meetupSchedules")
         stockQuantity = form_data.get("stockQuantity")
         
         gender = form_data.get("gender")
@@ -1085,14 +1114,15 @@ class ProductService:
         
         # Normalize deal method for validation
         normalized_deal_method = dealMethod.strip().lower()
-        if normalized_deal_method not in {"delivery", "meet up", "meetup"}:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="dealMethod must be either 'Delivery' or 'Meet Up'"
-            )
+        # if normalized_deal_method not in {"delivery", "meet up", "meetup"}:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="dealMethod must be either 'Delivery' or 'Meet Up'"
+        #     )
         
         purchase_button_enabled = self._parse_bool(purchaseButtonEnabled_raw, default=True)
         tracking_provided = self._parse_bool(trackingProvided_raw, default=False)
+        meetup_anytime = self._parse_bool(meetupAnytime_raw, default=False)
         
         # Parse colors JSON
         colors: List[str] = []
@@ -1109,19 +1139,19 @@ class ProductService:
                 )
         
         # colors are required per documentation
-        if not colors:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="colors is required and must contain at least one value"
-            )
+        # if not colors:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="colors is required and must contain at least one value"
+        #     )
         
         # Validate required classification fields
         required_fields = []
         if not productType:
             required_fields.append("productType")
-        if not brand:
-            required_fields.append("brand")
-        # if not productStyle:
+        # if not brand:
+        #     required_fields.append("brand")
+        # # if not productStyle:
             # required_fields.append("productStyle")
         if required_fields:
             raise HTTPException(
@@ -1207,26 +1237,27 @@ class ProductService:
                 )
         
         # Validate and get brand ID
-        try:
-            brand_id = int(brand)
-            brand = self.db.query(Brand).filter(Brand.id == brand_id).first()
-            if not brand:
+        if brand:
+            try:
+                brand_id = int(brand)
+                brand = self.db.query(Brand).filter(Brand.id == brand_id).first()
+                if not brand:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid brand ID: {brand}"
+                    )
+                if not brand.active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Brand '{brand.name}' is not active"
+                    )
+            except HTTPException:
+                raise
+            except (ValueError, TypeError):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid brand ID: {brand}"
+                    detail=f"Invalid brand format. Expected integer ID, got: {brand}"
                 )
-            if not brand.active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Brand '{brand.name}' is not active"
-                )
-        except HTTPException:
-            raise
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid brand format. Expected integer ID, got: {brand}"
-            )
         
         # Validate category-specific requirements (need to get category name for validation)
         main_category_obj = self.db.query(MainCategory).filter(MainCategory.id == category_id).first()
@@ -1291,39 +1322,59 @@ class ProductService:
                     detail=f"Invalid meetupLocations format: {exc}"
                 )
         
+        # Parse meetup schedules
+        meetup_schedules: Optional[List[Dict[str, Any]]] = None
+        if meetupSchedules_raw:
+            try:
+                parsed_schedules = json.loads(meetupSchedules_raw)
+                if not isinstance(parsed_schedules, list):
+                    raise ValueError("meetupSchedules must be a JSON array")
+                meetup_schedules = parsed_schedules
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid meetupSchedules format: {exc}"
+                )
+        
         # Validate deal method specific requirements
-        if normalized_deal_method in {"meet up", "meetup"}:
-            if not meetupDate or not meetupTime:
+        # if normalized_deal_method in {"meet up", "meetup"}:
+        #     if not meetupDate or not meetupTime:
+        #         # Still check old fields for backward compatibility, but prioritize new ones if present
+        #         pass
+            
+        #     # If not meetupAnytime, require at least one schedule
+        #     if not meetup_anytime:
+        #         if not meetup_schedules or len(meetup_schedules) == 0:
+        #             raise HTTPException(
+        #                 status_code=status.HTTP_400_BAD_REQUEST,
+        #                 detail="At least one meetup schedule is required when meetupAnytime is false"
+        #             )
+        #     if purchase_button_enabled:
+        #         if not meetup_locations or len(meetup_locations) == 0:
+        #             raise HTTPException(
+        #                 status_code=status.HTTP_400_BAD_REQUEST,
+        #                 detail="At least one meetup location is required when purchaseButtonEnabled is true for Meet Up"
+        #             )
+        #elif normalized_deal_method == "delivery":
+        if purchase_button_enabled:
+            missing_delivery_fields = [
+                field_name for field_name, value in {
+                    "deliveryMethod": deliveryMethod,
+                    "deliveryTime": deliveryTime,
+                    "deliveryFee": deliveryFee_raw,
+                    "deliveryFeeType": deliveryFeeType
+                }.items() if value in (None, "")
+            ]
+            if missing_delivery_fields:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="meetupDate and meetupTime are required when dealMethod is 'Meet Up'"
+                    detail=f"Missing required delivery fields: {', '.join(missing_delivery_fields)}"
                 )
-            if purchase_button_enabled:
-                if not meetup_locations or len(meetup_locations) == 0:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="At least one meetup location is required when purchaseButtonEnabled is true for Meet Up"
-                    )
-        elif normalized_deal_method == "delivery":
-            if purchase_button_enabled:
-                missing_delivery_fields = [
-                    field_name for field_name, value in {
-                        "deliveryMethod": deliveryMethod,
-                        "deliveryTime": deliveryTime,
-                        "deliveryFee": deliveryFee_raw,
-                        "deliveryFeeType": deliveryFeeType
-                    }.items() if value in (None, "")
-                ]
-                if missing_delivery_fields:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Missing required delivery fields: {', '.join(missing_delivery_fields)}"
-                    )
-            if deliveryMethod and deliveryMethod.strip().lower() == "partner" and not shippingAddress:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="shippingAddress is required when deliveryMethod is 'partner'"
-                )
+        if deliveryMethod and deliveryMethod.strip().lower() == "partner" and not shippingAddress:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="shippingAddress is required when deliveryMethod is 'partner'"
+            )
         
         delivery_method_normalized: Optional[str] = None
         if deliveryMethod:
@@ -1416,7 +1467,7 @@ class ProductService:
         verification_code = self._generate_verification_code()
         verification_expires_at = self._get_verification_expiry()
         
-        deal_method_value = "Delivery" if normalized_deal_method == "delivery" else "Meet Up"
+        #deal_method_value = "Delivery" if normalized_deal_method == "delivery" else "Meet Up"
         stock_status_value = "In Stock" if stock_quantity_value > 0 else "Out of Stock"
         
         product = Product(
@@ -1430,6 +1481,9 @@ class ProductService:
             meetup_date=meetupDate,
             meetup_location=meetupLocation,
             meetup_time=meetupTime,
+            meetup_locations=meetup_locations,
+            meetup_anytime=meetup_anytime,
+            meetup_schedules=meetup_schedules,
             images=image_urls,
             stock_quantity=stock_quantity_value,
             stock_status=stock_status_value,
@@ -1456,8 +1510,7 @@ class ProductService:
             delivery_fee=delivery_fee_decimal,
             delivery_fee_type=delivery_fee_type_normalized,
             tracking_provided=tracking_provided,
-            shipping_address=shippingAddress.strip() if shippingAddress else None,
-            meetup_locations=meetup_locations
+            shipping_address=shippingAddress.strip() if shippingAddress else None
         )
         
         self.db.add(product)

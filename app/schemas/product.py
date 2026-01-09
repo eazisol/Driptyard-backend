@@ -42,6 +42,8 @@ class ProductCreate(BaseCreateSchema):
     meetupLocation: Optional[str] = Field(None, max_length=255, description="Meetup location")
     meetupTime: Optional[str] = Field(None, description="Meetup time (HH:MM)")
     meetupLocations: Optional[str] = Field(None, description="JSON stringified meetup locations or array of location objects")
+    meetupAnytime: Optional[Union[bool, str]] = Field(False, description="Whether meetup any time is allowed")
+    meetupSchedules: Optional[str] = Field(None, description="JSON stringified array of meetup schedule objects")
 
     # Inventory
     stockQuantity: Optional[str] = Field(None, description="Stock quantity as string")
@@ -115,6 +117,18 @@ class ProductCreate(BaseCreateSchema):
             return v
         raise ValueError("meetupLocations must be a string or list")
     
+    @field_validator('meetupSchedules', mode='before')
+    @classmethod
+    def validate_meetup_schedules(cls, v):
+        """Convert list to JSON string if needed."""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return json.dumps(v)
+        if isinstance(v, str):
+            return v
+        raise ValueError("meetupSchedules must be a string or list")
+    
     @field_validator('category', 'gender', 'productType', 'subCategory', 'brand', mode='before')
     @classmethod
     def validate_id_fields(cls, v):
@@ -170,6 +184,8 @@ class ProductUpdate(BaseUpdateSchema):
     tracking_provided: Optional[bool] = Field(None, description="Whether tracking is provided")
     shipping_address: Optional[str] = Field(None, description="Seller shipping address")
     meetup_locations: Optional[List[Dict[str, Any]]] = Field(None, description="Meetup locations configuration")
+    meetup_anytime: Optional[bool] = Field(None, description="Whether meetup any time is allowed")
+    meetup_schedules: Optional[List[Dict[str, Any]]] = Field(None, description="Meetup schedules configuration")
 
     images: Optional[List[str]] = Field(None, description="Product image URLs")
     specifications: Optional[Dict[str, Any]] = Field(None, description="Product specifications")
@@ -212,6 +228,7 @@ class ProductListResponse(BaseModel):
     deal_method: str = Field(..., description="Deal method")
     product_type: Optional[str] = Field(None, description="Product type")
     product_style: Optional[str] = Field(None, description="Product style")
+    size: Optional[str] = Field(None, description="Product size")
     colors: List[str] = Field(default_factory=list, description="Product colors")
     purchase_button_enabled: bool = Field(..., description="Whether the buy button is enabled")
     seller: SellerInfo = Field(..., description="Seller information")
@@ -253,6 +270,8 @@ class ProductDetailResponse(BaseResponseSchema):
     meetup_location: Optional[str] = Field(None, description="Meetup location")
     meetup_time: Optional[str] = Field(None, description="Meetup time")
     meetup_locations: Optional[List[Dict[str, Any]]] = Field(None, description="Meetup locations configuration")
+    meetup_anytime: bool = Field(default=False, description="Whether meetup any time is allowed")
+    meetup_schedules: Optional[List[Dict[str, Any]]] = Field(None, description="Meetup schedules configuration")
 
     # Stock
     stock_quantity: int = Field(..., description="Stock quantity")
@@ -288,7 +307,7 @@ class ProductDetailResponse(BaseResponseSchema):
     is_sold: bool = Field(..., description="Whether product is sold")
     is_spotlighted: bool = Field(..., description="Whether product is spotlighted")
     is_verified: bool = Field(..., description="Whether product has been verified")
-
+    is_followed: bool = Field(..., description="Whether product is followed")
     # Seller info
     seller: SellerInfo = Field(..., description="Seller information")
 

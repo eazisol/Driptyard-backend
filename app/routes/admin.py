@@ -3580,7 +3580,7 @@ async def bulk_apply_spotlight(
             action_message = action_messages.get(request.action, "Spotlight action")
             
             # Get product titles for audit log
-            products = db.query(Product).filter(Product.id.in_(request.product_ids)).all()
+            products = db.query(Product).filter(Product.id.in_(result["spotlighted_product_ids"])).all()
             target_identifier_str = ", ".join([p.title for p in products]) if products else f"{updated_count} listing(s)"
             
             log_audit_action(

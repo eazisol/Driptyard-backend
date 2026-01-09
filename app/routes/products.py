@@ -222,7 +222,7 @@ async def list_my_products(
     """
     service = ProductService(db)
     return service.list_user_products(
-        current_user_id, page, page_size, status_filter, search,
+        current_user_id,current_user_id, page, page_size, status_filter, search,
         category=category,
         product_type=product_type,
         sub_category=sub_category,
@@ -386,7 +386,8 @@ async def get_seller_listings(
     colors: Optional[List[str]] = Query(None, description="Filter by colors (array)"),
     conditions: Optional[List[str]] = Query(None, description="Filter by conditions (array)"),
     delivery: Optional[List[str]] = Query(None, description="Filter by delivery method (array)"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user_id: Optional[str] = Depends(get_current_user_id)
 ):
     """
     Get all product listings for a specific seller (open route, no authentication required).
@@ -423,7 +424,7 @@ async def get_seller_listings(
     service = ProductService(db)
     # Return all products for the seller (no status filter)
     return service.list_user_products(
-        seller_id, page, page_size, None, search,
+        current_user_id,seller_id, page, page_size, None, search,
         category=category,
         product_type=product_type,
         sub_category=sub_category,

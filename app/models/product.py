@@ -79,6 +79,8 @@ class Product(UserProductBaseModel):
     tracking_provided = Column(Boolean, default=False, nullable=False)
     shipping_address = Column(String(255), nullable=True)
     meetup_locations = Column(JSON, nullable=True)
+    meetup_anytime = Column(Boolean, default=False, nullable=False)
+    meetup_schedules = Column(JSON, nullable=True)
     
     # Ratings and reviews
     rating = Column(Float, default=0.0, nullable=False)

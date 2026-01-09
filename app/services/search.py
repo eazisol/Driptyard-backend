@@ -108,7 +108,7 @@ class SearchService:
         #     Product.title.ilike(f"%{query}%"),
         #     Product.description.ilike(f"%{query}%"),
         # )
-        search_filter = Product.title.ilike(f"{query}%")
+        search_filter = Product.title.ilike(f"%{query}%")
         
         # Query products (only active, not sold)
         products = self.db.query(Product).filter(
