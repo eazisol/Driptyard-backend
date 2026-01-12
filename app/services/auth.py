@@ -226,7 +226,8 @@ class AuthService:
             "company_name": user.company_name,
             "sin_number": user.sin_number,
             "created_at": user.created_at,
-            "updated_at": user.updated_at
+            "updated_at": user.updated_at,
+            "is_moderator": user.is_moderator
         }
         
         return {

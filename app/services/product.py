@@ -41,6 +41,7 @@ from app.services.s3 import get_s3_service
 from app.services.email import email_service
 from app.services.spotlight import SpotlightService
 from app.models.follow import ProductFollow, SellerFollow
+from app.models.recent_view import RecentView
 
 
 class ProductService:
@@ -1467,7 +1468,14 @@ class ProductService:
         verification_code = self._generate_verification_code()
         verification_expires_at = self._get_verification_expiry()
         
-        #deal_method_value = "Delivery" if normalized_deal_method == "delivery" else "Meet Up"
+        # Determine the primary deal method for the database (delivery or meetup)
+        # If it contains "meet up", we categorize it as "Meet Up" for legacy tracking,
+        # otherwise "Delivery".
+        if "meet up" in normalized_deal_method or "meetup" in normalized_deal_method:
+            deal_method_value = "Meet Up"
+        else:
+            deal_method_value = "Delivery"
+        
         stock_status_value = "In Stock" if stock_quantity_value > 0 else "Out of Stock"
         
         product = Product(
@@ -1729,9 +1737,147 @@ class ProductService:
         initial_is_verified = product.is_verified
         
         # Update fields
-        update_data = product_data.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(product, field, value)
+        update_dict = product_data.model_dump(exclude_unset=True)
+        
+        # Mapping from camelCase schema fields to snake_case model columns
+        field_mapping = {
+            "dealMethod": "deal_method",  # Note: logic for deal_method_value is handled below
+            "meetupDate": "meetup_date",
+            "meetupLocation": "meetup_location",
+            "meetupTime": "meetup_time",
+            "meetupLocations": "meetup_locations",
+            "meetupAnytime": "meetup_anytime",
+            "meetupSchedules": "meetup_schedules",
+            "stockQuantity": "stock_quantity",
+            "gender": "gender_id",
+            "productType": "product_type_id",
+            "subCategory": "sub_category_id",
+            "brand": "brand_id",
+            "productStyle": "product_style",
+            "measurementChest": "measurement_chest",
+            "measurementSleeveLength": "measurement_sleeve_length",
+            "measurementLength": "measurement_length",
+            "measurementHem": "measurement_hem",
+            "measurementShoulders": "measurement_shoulders",
+            "purchaseButtonEnabled": "purchase_button_enabled",
+            "deliveryMethod": "delivery_method",
+            "deliveryTime": "delivery_time",
+            "deliveryFee": "delivery_fee",
+            "deliveryFeeType": "delivery_fee_type",
+            "trackingProvided": "tracking_provided",
+            "shippingAddress": "shipping_address"
+        }
+        
+        for field, value in update_dict.items():
+            if field == "images":
+                product.images = value
+                continue
+                
+            model_field = field_mapping.get(field, field)
+            
+            # Special handling for boolean strings
+            if field in ["purchaseButtonEnabled", "trackingProvided", "meetupAnytime"]:
+                setattr(product, model_field, self._parse_bool(value, default=getattr(product, model_field)))
+                continue
+
+            # Special handling for numeric conversions
+            if field == "price":
+                if value is None:
+                    continue # Price is mandatory in DB, don't set to null
+                try:
+                    product.price = Decimal(value)
+                except (ValueError, TypeError, InvalidOperation):
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price format")
+                continue
+                
+            if field == "deliveryFee":
+                try:
+                    product.delivery_fee = Decimal(value) if value not in (None, "") else None
+                except (ValueError, TypeError, InvalidOperation):
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid deliveryFee format")
+                continue
+                
+            if field == "stockQuantity":
+                if value is None:
+                    continue # Mandatory field
+                try:
+                    product.stock_quantity = int(value)
+                    product.stock_status = "In Stock" if product.stock_quantity > 0 else "Out of Stock"
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="stockQuantity must be an integer")
+                continue
+
+            # Special handling for ID fields (foreign keys)
+            if field in ["category", "gender", "productType", "subCategory", "brand"]:
+                if value is None:
+                    if field == "category":
+                        product.category_id = None
+                    elif field == "gender":
+                        product.gender_id = None
+                    elif field == "productType":
+                        product.product_type_id = None
+                    elif field == "subCategory":
+                        product.sub_category_id = None
+                    elif field == "brand":
+                        product.brand_id = None
+                    continue
+                
+                try:
+                    int_id = int(value)
+                    # Verify existence
+                    if field == "category":
+                        if not self.db.query(MainCategory).filter(MainCategory.id == int_id).first():
+                            raise ValueError(f"Category {int_id} not found")
+                        product.category_id = int_id
+                    elif field == "gender":
+                        if not self.db.query(Gender).filter(Gender.id == int_id).first():
+                            raise ValueError(f"Gender {int_id} not found")
+                        product.gender_id = int_id
+                    elif field == "productType":
+                        if not self.db.query(CategoryType).filter(CategoryType.id == int_id).first():
+                            raise ValueError(f"ProductType {int_id} not found")
+                        product.product_type_id = int_id
+                    elif field == "subCategory":
+                        if not self.db.query(SubCategory).filter(SubCategory.id == int_id).first():
+                            raise ValueError(f"SubCategory {int_id} not found")
+                        product.sub_category_id = int_id
+                    elif field == "brand":
+                        brand_obj = self.db.query(Brand).filter(Brand.id == int_id).first()
+                        if not brand_obj:
+                            raise ValueError(f"Brand {int_id} not found")
+                        product.brand_id = int_id
+                except (ValueError, TypeError) as e:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                continue
+
+            # Special handling for JSON fields
+            if field in ["colors", "meetupLocations", "meetupSchedules"]:
+                if value is None:
+                    setattr(product, model_field, None)
+                else:
+                    try:
+                        parsed = json.loads(value) if isinstance(value, str) else value
+                        if not isinstance(parsed, list):
+                            raise ValueError(f"{field} must be a list")
+                        setattr(product, model_field, parsed)
+                    except (ValueError, json.JSONDecodeError) as e:
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                continue
+
+            # Special handling for dealMethod
+            if field == "dealMethod":
+                if value is None:
+                    continue
+                normalized = value.strip().lower()
+                if "meet up" in normalized or "meetup" in normalized:
+                    product.deal_method = "Meet Up"
+                else:
+                    product.deal_method = "Delivery"
+                continue
+
+            # Default update for other fields
+            if hasattr(product, model_field):
+                setattr(product, model_field, value)
         
         self.db.commit()
         self.db.refresh(product)
@@ -1746,14 +1892,11 @@ class ProductService:
         
         # If product became active and verified, resume spotlight
         elif (not initial_is_active and product.is_active) or (not initial_is_verified and product.is_verified):
-            if product.is_active and product.is_verified:
-                spotlight_service.resume_spotlight(product.id, "Product was Verified or Activated.", admin_user_id=performer_id)
+            spotlight_service.resume_spotlight(product.id, "Product became Verified and Active.", admin_user_id=performer_id)
         
         seller = self.db.query(User).filter(User.id == product.owner_id).first()
-        
-        # User updating is the owner, so is_followed will be False (can't follow self)
-        return self._product_to_detail_response(product, seller, user_id=None)
-    
+        return self._product_to_detail_response(product, seller, user_id=user_id_int)
+
     def add_product_images(self, product_id: str, images: List[UploadFile], user_id: str) -> ProductDetailResponse:
         """
         Add or replace images for an existing product.
@@ -1913,3 +2056,207 @@ class ProductService:
             self.db.commit()
             
         return deactivated_count, deactivated_ids, deactivated_titles
+
+    def get_related_products(self, product_id: str, limit: int = 4, user_id: Optional[int] = None) -> List[ProductListResponse]:
+        """
+        Get related products for a given product ID.
+        
+        Args:
+            product_id: Source product ID (integer)
+            limit: Number of related products to return
+            user_id: Optional authenticated user ID for follow status
+            
+        Returns:
+            List[ProductListResponse]: List of related products
+        """
+        try:
+            product_id_int = int(product_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid product ID format. Expected integer ID."
+            )
+        
+        product = self.db.query(Product).filter(Product.id == product_id_int).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        # Define spotlight sort case
+        spotlight_case = case(
+            (and_(Product.is_spotlighted == True, Product.spotlight_end_time.isnot(None)), 1),
+            else_=0
+        )
+        
+        # 1. Try to find products in the same category
+        related_query = self.db.query(Product).filter(
+            and_(
+                Product.id != product_id_int,
+                Product.is_active == True,
+                Product.is_sold == False,
+                Product.category_id == product.category_id
+            )
+        )
+        
+        related_products = related_query.order_by(
+            spotlight_case.desc(),
+            Product.created_at.desc()
+        ).limit(limit).all()
+        
+        # 2. If not enough products, try to fill with products from same brand
+        if len(related_products) < limit and product.brand_id:
+            already_found_ids = [p.id for p in related_products]
+            additional_limit = limit - len(related_products)
+            
+            brand_query = self.db.query(Product).filter(
+                and_(
+                    Product.id != product_id_int,
+                    Product.id.notin_(already_found_ids),
+                    Product.is_active == True,
+                    Product.is_sold == False,
+                    Product.brand_id == product.brand_id
+                )
+            )
+            
+            brand_products = brand_query.order_by(
+                spotlight_case.desc(),
+                Product.created_at.desc()
+            ).limit(additional_limit).all()
+            
+            related_products.extend(brand_products)
+            
+        # 3. If still not enough, fill with any active products
+        if len(related_products) < limit:
+            already_found_ids = [p.id for p in related_products]
+            already_found_ids.append(product_id_int)
+            additional_limit = limit - len(related_products)
+            
+            any_query = self.db.query(Product).filter(
+                and_(
+                    Product.id.notin_(already_found_ids),
+                    Product.is_active == True,
+                    Product.is_sold == False
+                )
+            )
+            
+            any_products = any_query.order_by(
+                spotlight_case.desc(),
+                Product.created_at.desc()
+            ).limit(additional_limit).all()
+            
+            related_products.extend(any_products)
+            
+        # Convert to response schema
+        product_ids = [p.id for p in related_products]
+        followed_product_ids = self._get_followed_product_ids(user_id, product_ids)
+        
+        seller_ids = [p.owner_id for p in related_products]
+        followed_seller_ids = self._get_followed_seller_ids(user_id, seller_ids)
+        
+        items = []
+        for p in related_products:
+            seller = self.db.query(User).filter(User.id == p.owner_id).first()
+            if seller:
+                is_followed = p.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(p, seller, is_followed, seller_is_followed))
+                
+        return items
+
+    def record_product_view(self, product_id: str, user_id: Optional[str] = None, ip_address: Optional[str] = None) -> None:
+        """
+        Record that a user (or guest) has viewed a product.
+        
+        Args:
+            product_id: Product ID (integer)
+            user_id: Optional User ID (integer string)
+            ip_address: Optional IP address for guest tracking
+        """
+        try:
+            pid_int = int(product_id)
+            uid_int = int(user_id) if user_id else None
+        except (ValueError, TypeError):
+            return # Silent fail for invalid IDs
+            
+        if uid_int:
+            # If user is logged in, track by user_id
+            recent_view = self.db.query(RecentView).filter(
+                RecentView.user_id == uid_int,
+                RecentView.product_id == pid_int
+            ).first()
+        elif ip_address:
+            # If guest, track by IP address (where user_id is NULL)
+            recent_view = self.db.query(RecentView).filter(
+                RecentView.user_id.is_(None),
+                RecentView.ip_address == ip_address,
+                RecentView.product_id == pid_int
+            ).first()
+        else:
+            return
+
+        if recent_view:
+            recent_view.viewed_at = datetime.utcnow()
+        else:
+            new_view = RecentView(user_id=uid_int, product_id=pid_int, ip_address=ip_address)
+            self.db.add(new_view)
+            
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+
+    def get_recently_viewed_products(self, user_id: Optional[str] = None, ip_address: Optional[str] = None, limit: int = 10) -> List[ProductListResponse]:
+        """
+        Get products recently viewed by a user or guest.
+        
+        Args:
+            user_id: Optional User ID (integer string)
+            ip_address: Optional IP address for guest tracking
+            limit: Maximum number of products to return
+            
+        Returns:
+            List[ProductListResponse]: List of recently viewed products
+        """
+        try:
+            uid_int = int(user_id) if user_id else None
+        except (ValueError, TypeError):
+            uid_int = None
+            
+        query = self.db.query(RecentView, Product).join(
+            Product, RecentView.product_id == Product.id
+        )
+        
+        if uid_int:
+            query = query.filter(RecentView.user_id == uid_int)
+        elif ip_address:
+            query = query.filter(
+                RecentView.user_id.is_(None),
+                RecentView.ip_address == ip_address
+            )
+        else:
+            return []
+            
+        recent_views = query.filter(
+            Product.is_active == True,
+            Product.is_sold == False
+        ).order_by(
+            RecentView.viewed_at.desc()
+        ).limit(limit).all()
+        
+        product_ids = [p.id for v, p in recent_views]
+        followed_product_ids = self._get_followed_product_ids(uid_int, product_ids)
+        
+        seller_ids = [p.owner_id for v, p in recent_views]
+        followed_seller_ids = self._get_followed_seller_ids(uid_int, seller_ids)
+        
+        items = []
+        for view, product in recent_views:
+            seller = self.db.query(User).filter(User.id == product.owner_id).first()
+            if seller:
+                is_followed = product.id in followed_product_ids
+                seller_is_followed = seller.id in followed_seller_ids
+                items.append(self._product_to_list_response(product, seller, is_followed, seller_is_followed))
+                
+        return items

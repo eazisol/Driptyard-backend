@@ -15,6 +15,7 @@ from app.schemas.product import (
     ProductCreate,
     ProductUpdate,
     ProductDetailResponse,
+    ProductListResponse,
     ProductPaginationResponse,
     ProductVerificationRequest
 )
@@ -441,29 +442,83 @@ async def get_seller_listings(
     )
 
 
+@router.get("/recent", response_model=List[ProductListResponse])
+async def get_recently_viewed_products(
+    request: Request,
+    limit: int = Query(10, ge=1, le=50, description="Number of recent views to return"),
+    current_user_id: Optional[str] = Depends(get_optional_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get products recently viewed by the current user or guest.
+    
+    Returns a list of products that the user has visited, ordered by 
+    most recent view first.
+    """
+    service = ProductService(db)
+    return service.get_recently_viewed_products(
+        user_id=current_user_id, 
+        ip_address=request.client.host, 
+        limit=limit
+    )
+
+
 @router.get("/{product_id}", response_model=ProductDetailResponse)
 async def get_product(
     product_id: str,
+    request: Request,
     current_user_id: Optional[str] = Depends(get_optional_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Get detailed product information by ID.
     
-    Returns complete product details including specifications, 
-    seller information, ratings, and policies.
-    Includes seller follow status if user is authenticated.
+    If context user is authenticated, personalized information like
+    is_followed status will be returned.
+    
+    Records the view for history (hybrid: user_id or ip_address).
+    """
+    service = ProductService(db)
+    
+    # Record view (hybrid: user_id preferred, ip_address fallback)
+    service.record_product_view(
+        product_id=product_id, 
+        user_id=current_user_id, 
+        ip_address=request.client.host
+    )
+    
+    # Convert user_id to int if authenticated for following status
+    user_id_int = None
+    if current_user_id:
+        try:
+            user_id_int = int(current_user_id)
+        except (ValueError, TypeError):
+            user_id_int = None
+    
+    return service.get_product(product_id, user_id_int)
+
+
+@router.get("/{product_id}/related", response_model=List[ProductListResponse])
+async def get_related_products(
+    product_id: str,
+    limit: int = Query(4, ge=1, le=20, description="Number of related products to return"),
+    current_user_id: Optional[str] = Depends(get_optional_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get related products for a specific product listing.
+    
+    Returns products that are similar to the source product, 
+    matching by category and brand.
     
     Args:
-        product_id: Product ID (integer)
+        product_id: Source product ID (integer)
+        limit: Number of related products to return (default 4)
         current_user_id: Optional authenticated user ID
         db: Database session
         
     Returns:
-        ProductDetailResponse: Complete product details with seller follow status
-        
-    Raises:
-        HTTPException: If product not found
+        List[ProductListResponse]: List of related products
     """
     service = ProductService(db)
     
@@ -474,8 +529,8 @@ async def get_product(
             user_id_int = int(current_user_id)
         except (ValueError, TypeError):
             user_id_int = None
-    
-    return service.get_product(product_id, user_id_int)
+            
+    return service.get_related_products(product_id, limit, user_id_int)
 
 
 @router.get("/{product_id}/followers")
